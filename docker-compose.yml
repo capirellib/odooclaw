@@ -1,0 +1,18 @@
+services:
+  odooclaw:
+    image: odooclaw:latest
+    container_name: odooclaw-${INSTANCE_NAME}
+    platform: ${DOCKER_DEFAULT_PLATFORM:-}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      platform: ${DOCKER_DEFAULT_PLATFORM:-}
+    restart: unless-stopped
+    env_file:
+      - instances/${INSTANCE_NAME}/.env
+    volumes:
+      - ./instances/${INSTANCE_NAME}/config.json:/home/odooclaw/.odooclaw/config.json:ro
+      - ./instances/${INSTANCE_NAME}/workspace:/home/odooclaw/.odooclaw/workspace
+      - ./instances/${INSTANCE_NAME}/.npm:/home/odooclaw/.npm
+    ports:
+      - "${GATEWAY_PORT}:18790"
