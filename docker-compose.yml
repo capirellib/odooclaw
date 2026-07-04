@@ -1,6 +1,6 @@
 services:
   odooclaw:
-    image: odooclaw:latest
+    image: bettaerp/odooclaw:latest
     container_name: odooclaw-${INSTANCE_NAME}
     platform: ${DOCKER_DEFAULT_PLATFORM:-}
     build:
