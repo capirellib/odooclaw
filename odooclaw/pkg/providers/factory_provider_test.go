@@ -99,6 +99,26 @@ func TestCreateProviderFromConfig_OpenAI(t *testing.T) {
 	}
 }
 
+func TestCreateProviderFromConfig_OpenRouterPreservesFullModelID(t *testing.T) {
+	cfg := &config.ModelConfig{
+		ModelName: "openrouter-free",
+		Model:     "openrouter/free",
+		APIKey:    "test-key",
+		APIBase:   "https://openrouter.ai/api/v1",
+	}
+
+	provider, modelID, err := CreateProviderFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("CreateProviderFromConfig() error = %v", err)
+	}
+	if provider == nil {
+		t.Fatal("CreateProviderFromConfig() returned nil provider")
+	}
+	if modelID != "openrouter/free" {
+		t.Errorf("modelID = %q, want %q", modelID, "openrouter/free")
+	}
+}
+
 func TestCreateProviderFromConfig_DefaultAPIBase(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -23,6 +23,13 @@ func ParseModelRef(raw string, defaultProvider string) *ModelRef {
 		if model == "" {
 			return nil
 		}
+		// OpenRouter model IDs contain their own namespace (for example,
+		// "openrouter/free" or "google/gemini-2.5-flash"). Keep the full
+		// value so the OpenAI-compatible request uses the ID expected by
+		// OpenRouter, including when this candidate is a fallback.
+		if provider == "openrouter" {
+			model = raw
+		}
 		return &ModelRef{Provider: provider, Model: model}
 	}
 

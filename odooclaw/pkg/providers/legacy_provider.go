@@ -7,6 +7,7 @@ package providers
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/nicolasramos/odooclaw/pkg/config"
 )
@@ -43,7 +44,40 @@ func CreateProvider(cfg *config.Config) (LLMProvider, string, error) {
 	// Get model config from model_list
 	modelCfg, err := cfg.GetModelConfig(model)
 	if err != nil {
-		return nil, "", fmt.Errorf("model %q not found in model_list: %w", model, err)
+		// Preserve compatibility with environment-based deployments that set an
+		// OpenRouter model ID directly (for example, openrouter/auto or
+		// openrouter/free) instead of defining a local model_list alias.
+		// model_list remains the preferred configuration for named models and
+		// load balancing, but is not required for this direct OpenRouter form.
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "openrouter/") &&
+			cfg.Providers.OpenRouter.APIKey != "" {
+			modelCfg = &config.ModelConfig{
+				ModelName: model,
+				Model:     model,
+				APIKey:    cfg.Providers.OpenRouter.APIKey,
+				APIBase:   cfg.Providers.OpenRouter.APIBase,
+				Proxy:     cfg.Providers.OpenRouter.Proxy,
+			}
+		} else {
+			return nil, "", fmt.Errorf("model %q not found in model_list: %w", model, err)
+		}
+	}
+
+	// A model_list entry selects an OpenRouter model, while the legacy provider
+	// block remains the environment-variable-friendly place for shared
+	// OpenRouter credentials. Inherit values only when the model entry leaves
+	// them empty, preserving explicit per-model overrides.
+	protocol, _ := ExtractProtocol(modelCfg.Model)
+	if strings.EqualFold(protocol, "openrouter") {
+		if modelCfg.APIKey == "" {
+			modelCfg.APIKey = cfg.Providers.OpenRouter.APIKey
+		}
+		if modelCfg.APIBase == "" {
+			modelCfg.APIBase = cfg.Providers.OpenRouter.APIBase
+		}
+		if modelCfg.Proxy == "" {
+			modelCfg.Proxy = cfg.Providers.OpenRouter.Proxy
+		}
 	}
 
 	// Inject global workspace if not set in model config

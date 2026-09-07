@@ -699,6 +699,20 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
+	// ProviderConfig uses a template-style env tag for the generic provider
+	// fields. The env parser does not expand that template, so apply the
+	// documented OpenRouter variables explicitly. This keeps container-based
+	// deployments from having to place API credentials in config.json.
+	if value, ok := os.LookupEnv("ODOOCLAW_PROVIDERS_OPENROUTER_API_KEY"); ok {
+		cfg.Providers.OpenRouter.APIKey = value
+	}
+	if value, ok := os.LookupEnv("ODOOCLAW_PROVIDERS_OPENROUTER_API_BASE"); ok {
+		cfg.Providers.OpenRouter.APIBase = value
+	}
+	if value, ok := os.LookupEnv("ODOOCLAW_PROVIDERS_OPENROUTER_PROXY"); ok {
+		cfg.Providers.OpenRouter.Proxy = value
+	}
+
 	// Migrate legacy channel config fields to new unified structures
 	cfg.migrateChannelConfigs()
 

@@ -15,6 +15,19 @@ func TestParseModelRef_WithSlash(t *testing.T) {
 	}
 }
 
+func TestParseModelRef_PreservesOpenRouterModelID(t *testing.T) {
+	ref := ParseModelRef("openrouter/free", "")
+	if ref == nil {
+		t.Fatal("expected non-nil ref")
+	}
+	if ref.Provider != "openrouter" {
+		t.Errorf("provider = %q, want openrouter", ref.Provider)
+	}
+	if ref.Model != "openrouter/free" {
+		t.Errorf("model = %q, want openrouter/free", ref.Model)
+	}
+}
+
 func TestParseModelRef_WithoutSlash(t *testing.T) {
 	ref := ParseModelRef("gpt-4", "openai")
 	if ref == nil {

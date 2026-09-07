@@ -473,8 +473,8 @@ func TestResolveCandidatesWithLookup_AliasResolvesToNestedModel(t *testing.T) {
 	if candidates[0].Provider != "openrouter" {
 		t.Fatalf("provider = %q, want openrouter", candidates[0].Provider)
 	}
-	if candidates[0].Model != "stepfun/step-3.5-flash:free" {
-		t.Fatalf("model = %q, want stepfun/step-3.5-flash:free", candidates[0].Model)
+	if candidates[0].Model != "openrouter/stepfun/step-3.5-flash:free" {
+		t.Fatalf("model = %q, want openrouter/stepfun/step-3.5-flash:free", candidates[0].Model)
 	}
 }
 

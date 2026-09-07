@@ -227,13 +227,57 @@ func TestCreateProviderReturnsHTTPProviderForOpenRouter(t *testing.T) {
 		},
 	}
 
-	provider, _, err := CreateProvider(cfg)
+	provider, modelID, err := CreateProvider(cfg)
 	if err != nil {
 		t.Fatalf("CreateProvider() error = %v", err)
 	}
 
 	if _, ok := provider.(*HTTPProvider); !ok {
 		t.Fatalf("provider type = %T, want *HTTPProvider", provider)
+	}
+	if modelID != "openrouter/auto" {
+		t.Errorf("modelID = %q, want %q", modelID, "openrouter/auto")
+	}
+}
+
+func TestCreateProviderInheritsOpenRouterProviderCredentials(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agents.Defaults.Model = "openrouter-free"
+	cfg.ModelList = []config.ModelConfig{
+		{
+			ModelName: "openrouter-free",
+			Model:     "openrouter/free",
+		},
+	}
+	cfg.Providers.OpenRouter.APIKey = "sk-or-test"
+
+	provider, modelID, err := CreateProvider(cfg)
+	if err != nil {
+		t.Fatalf("CreateProvider() error = %v", err)
+	}
+	if _, ok := provider.(*HTTPProvider); !ok {
+		t.Fatalf("provider type = %T, want *HTTPProvider", provider)
+	}
+	if modelID != "openrouter/free" {
+		t.Errorf("modelID = %q, want %q", modelID, "openrouter/free")
+	}
+}
+
+func TestCreateProviderSupportsDirectOpenRouterModelReference(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Agents.Defaults.Model = "openrouter/auto"
+	cfg.ModelList = nil
+	cfg.Providers.OpenRouter.APIKey = "sk-or-test"
+
+	provider, modelID, err := CreateProvider(cfg)
+	if err != nil {
+		t.Fatalf("CreateProvider() error = %v", err)
+	}
+	if _, ok := provider.(*HTTPProvider); !ok {
+		t.Fatalf("provider type = %T, want *HTTPProvider", provider)
+	}
+	if modelID != "openrouter/auto" {
+		t.Errorf("modelID = %q, want %q", modelID, "openrouter/auto")
 	}
 }
 

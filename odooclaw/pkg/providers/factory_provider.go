@@ -92,7 +92,27 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 			cfg.RequestTimeout,
 		), modelID, nil
 
-	case "litellm", "openrouter", "groq", "zhipu", "gemini", "nvidia",
+	case "openrouter":
+		// OpenRouter model IDs include a provider/namespace segment themselves
+		// (for example "openrouter/free" or "google/gemini-2.5-flash").
+		// Preserve the complete configured model value so the downstream HTTP
+		// provider sends the identifier OpenRouter expects.
+		if cfg.APIKey == "" && cfg.APIBase == "" {
+			return nil, "", fmt.Errorf("api_key or api_base is required for HTTP-based protocol %q", protocol)
+		}
+		apiBase := cfg.APIBase
+		if apiBase == "" {
+			apiBase = getDefaultAPIBase(protocol)
+		}
+		return NewHTTPProviderWithMaxTokensFieldAndRequestTimeout(
+			cfg.APIKey,
+			apiBase,
+			cfg.Proxy,
+			cfg.MaxTokensField,
+			cfg.RequestTimeout,
+		), cfg.Model, nil
+
+	case "litellm", "groq", "zhipu", "gemini", "nvidia",
 		"ollama", "moonshot", "shengsuanyun", "deepseek", "cerebras",
 		"volcengine", "vllm", "qwen", "mistral":
 		// All other OpenAI-compatible HTTP providers

@@ -44,6 +44,29 @@ Run models locally using [Ollama](https://ollama.com/).
 }
 ```
 
+### OpenRouter
+OpenRouter uses its own model IDs, which include a namespace. Keep the
+`openrouter/` prefix in the `model` value and select the local alias through
+`model_name`.
+
+```json
+{
+  "model_name": "openrouter-free",
+  "model": "openrouter/free",
+  "api_base": "https://openrouter.ai/api/v1"
+}
+```
+
+Set the shared key through `ODOOCLAW_PROVIDERS_OPENROUTER_API_KEY`; an explicit
+`api_key` in the model entry remains available when a model needs a different key.
+
+For existing environment-only deployments, `ODOOCLAW_AGENTS_DEFAULTS_MODEL_NAME`
+may also be set directly to `openrouter/free` or `openrouter/auto` when
+`ODOOCLAW_PROVIDERS_OPENROUTER_API_KEY` is configured.
+
+For a specific model routed through OpenRouter, use its complete OpenRouter
+model ID, for example `openrouter/google/gemini-2.5-flash`.
+
 ### LM Studio / vLLM / MLX (Local / OpenAI Compatible)
 If you are running a local server that mimics the OpenAI API:
 ```json

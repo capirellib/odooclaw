@@ -225,6 +225,26 @@ func TestLoadConfig_EngramCanBeEnabledFromEnv(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_OpenRouterCanBeConfiguredFromEnv(t *testing.T) {
+	t.Setenv("ODOOCLAW_PROVIDERS_OPENROUTER_API_KEY", "sk-or-test")
+	t.Setenv("ODOOCLAW_PROVIDERS_OPENROUTER_API_BASE", "https://router.example/v1")
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error: %v", err)
+	}
+	if cfg.Providers.OpenRouter.APIKey != "sk-or-test" {
+		t.Fatalf("OpenRouter API key = %q, want environment value", cfg.Providers.OpenRouter.APIKey)
+	}
+	if cfg.Providers.OpenRouter.APIBase != "https://router.example/v1" {
+		t.Fatalf("OpenRouter API base = %q, want environment value", cfg.Providers.OpenRouter.APIBase)
+	}
+}
+
 func TestLoadConfig_EngramMCPServerCanBeSetFromEnv(t *testing.T) {
 	t.Setenv("ODOOCLAW_ENGRAM_MCP_SERVER", "project-memory")
 	configPath := filepath.Join(t.TempDir(), "config.json")
