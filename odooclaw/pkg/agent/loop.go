@@ -27,6 +27,7 @@ import (
 	"github.com/nicolasramos/odooclaw/pkg/mcp"
 	"github.com/nicolasramos/odooclaw/pkg/media"
 	corememory "github.com/nicolasramos/odooclaw/pkg/memory"
+	"github.com/nicolasramos/odooclaw/pkg/metering"
 	"github.com/nicolasramos/odooclaw/pkg/providers"
 	"github.com/nicolasramos/odooclaw/pkg/routing"
 	"github.com/nicolasramos/odooclaw/pkg/skills"
@@ -808,6 +809,7 @@ func (al *AgentLoop) runAgentLoop(
 	agent *AgentInstance,
 	opts processOptions,
 ) (string, error) {
+	ctx = metering.WithRequest(ctx, opts.UserMessage)
 	// 0. Record last channel for heartbeat notifications (skip internal channels)
 	if opts.Channel != "" && opts.ChatID != "" {
 		// Don't record internal channels (cli, system, subagent)

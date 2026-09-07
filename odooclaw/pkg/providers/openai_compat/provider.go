@@ -202,6 +202,8 @@ func (p *Provider) Chat(
 
 func parseResponse(body []byte) (*LLMResponse, error) {
 	var apiResponse struct {
+		ID      string `json:"id"`
+		Model   string `json:"model"`
 		Choices []struct {
 			Message struct {
 				Content          string            `json:"content"`
@@ -292,6 +294,8 @@ func parseResponse(body []byte) (*LLMResponse, error) {
 	}
 
 	return &LLMResponse{
+		ID:               apiResponse.ID,
+		Model:            apiResponse.Model,
 		Content:          strings.TrimSpace(content),
 		ReasoningContent: choice.Message.ReasoningContent,
 		Reasoning:        choice.Message.Reasoning,

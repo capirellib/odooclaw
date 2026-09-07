@@ -34,6 +34,7 @@ import (
 	"github.com/nicolasramos/odooclaw/pkg/heartbeat"
 	"github.com/nicolasramos/odooclaw/pkg/logger"
 	"github.com/nicolasramos/odooclaw/pkg/media"
+	"github.com/nicolasramos/odooclaw/pkg/metering"
 	"github.com/nicolasramos/odooclaw/pkg/providers"
 	"github.com/nicolasramos/odooclaw/pkg/state"
 	"github.com/nicolasramos/odooclaw/pkg/tools"
@@ -53,6 +54,10 @@ func gatewayCmd(debug bool) error {
 	provider, modelID, err := providers.CreateProvider(cfg)
 	if err != nil {
 		return fmt.Errorf("error creating provider: %w", err)
+	}
+	provider, err = metering.Wrap(cfg.Metering, cfg.WorkspacePath(), provider)
+	if err != nil {
+		return fmt.Errorf("error initializing Betta AI metering: %w", err)
 	}
 
 	// Use the resolved model ID from provider creation

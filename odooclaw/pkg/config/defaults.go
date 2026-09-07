@@ -43,6 +43,10 @@ func DefaultConfig() *Config {
 			Enabled:   false,
 			MCPServer: "engram",
 		},
+		Metering: MeteringConfig{
+			Enabled:            false,
+			HTTPTimeoutSeconds: 10,
+		},
 		Channels: ChannelsConfig{
 			WhatsApp: WhatsAppConfig{
 				Enabled:          false,

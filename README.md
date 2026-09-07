@@ -61,6 +61,35 @@ By using this engine, **OdooClaw** inherits the ability to run directly inside a
 
 ## 🚀 Integration Architecture
 
+### Betta AI metering control plane
+
+OdooClaw can authorize a customer deployment against Odoo, classify each user
+turn with the routing policy returned by Odoo, and report every provider usage
+through a durable SQLite outbox. Enable it per customer container:
+
+```yaml
+environment:
+  ODOOCLAW_METERING_ENABLED: "true"
+  ODOOCLAW_METERING_ODOO_URL: "https://odoo.customer.example"
+  ODOOCLAW_METERING_DATABASE: "customer_database" # omit with a strict dbfilter
+  ODOOCLAW_METERING_SERVICE_TOKEN: "${BETTA_AI_SERVICE_TOKEN}"
+  ODOOCLAW_METERING_CUSTOMER_TOKEN: "${BETTA_AI_CUSTOMER_TOKEN}" # bai-...
+  ODOOCLAW_METERING_QUEUE_PATH: "/home/odooclaw/.odooclaw/metering/usage.sqlite"
+volumes:
+  - odooclaw_data:/home/odooclaw/.odooclaw
+```
+
+The service token must match Odoo's `betta_ai.service_token`. OdooClaw calls
+`POST /api/v1/authorize`, caches the complete response for exactly its `ttl`,
+uses `routing.classifier_*` and the selected free/paid cascade locally, then
+persists each usage event before returning the model response. A background
+worker retries `POST /api/v1/usage` with exponential backoff and deletes an
+event only after a JSON response with `{"ok": true}`. Odoo's
+`generation_id` idempotency makes retries safe.
+
+The queue path must be inside a persistent volume. Never place either token in
+the image or commit them to Git.
+
 The integration consists of two parts:
 1. **The OdooClaw container**: Acts as the AI Gateway.
 2. **The Odoo module (`mail_bot_odooclaw`)**: Intercepts messages in Odoo and sends them to OdooClaw.

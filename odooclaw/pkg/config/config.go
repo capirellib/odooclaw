@@ -59,6 +59,20 @@ type Config struct {
 	Tools     ToolsConfig     `json:"tools"`
 	Heartbeat HeartbeatConfig `json:"heartbeat"`
 	Devices   DevicesConfig   `json:"devices"`
+	Metering  MeteringConfig  `json:"metering,omitempty"`
+}
+
+// MeteringConfig connects OdooClaw to the Betta AI control plane in Odoo.
+// The customer token identifies this deployment; the service token authenticates
+// server-to-server calls and must never be exposed to end users.
+type MeteringConfig struct {
+	Enabled            bool   `json:"enabled" env:"ODOOCLAW_METERING_ENABLED"`
+	OdooURL            string `json:"odoo_url" env:"ODOOCLAW_METERING_ODOO_URL"`
+	Database           string `json:"database,omitempty" env:"ODOOCLAW_METERING_DATABASE"`
+	ServiceToken       string `json:"service_token" env:"ODOOCLAW_METERING_SERVICE_TOKEN"`
+	CustomerToken      string `json:"customer_token" env:"ODOOCLAW_METERING_CUSTOMER_TOKEN"`
+	QueuePath          string `json:"queue_path,omitempty" env:"ODOOCLAW_METERING_QUEUE_PATH"`
+	HTTPTimeoutSeconds int    `json:"http_timeout_seconds,omitempty" env:"ODOOCLAW_METERING_HTTP_TIMEOUT_SECONDS"`
 }
 
 // MarshalJSON implements custom JSON marshaling for Config
@@ -711,6 +725,15 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if value, ok := os.LookupEnv("ODOOCLAW_PROVIDERS_OPENROUTER_PROXY"); ok {
 		cfg.Providers.OpenRouter.Proxy = value
+	}
+	// Reuse the standard Odoo connection variables when no metering-specific
+	// values were supplied. This keeps existing one-container-per-client stacks
+	// compatible while allowing the control plane to live at another URL.
+	if cfg.Metering.OdooURL == "" {
+		cfg.Metering.OdooURL = os.Getenv("ODOO_URL")
+	}
+	if cfg.Metering.Database == "" {
+		cfg.Metering.Database = os.Getenv("ODOO_DB")
 	}
 
 	// Migrate legacy channel config fields to new unified structures
