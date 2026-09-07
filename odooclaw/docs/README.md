@@ -15,6 +15,7 @@ OdooClaw is a specialized version of PicoClaw, tailored for integration with **O
 
 ### 2. Integration & Support
 - [General Troubleshooting](troubleshooting.md): Answers to common issues.
+- [Creación de skills para OdooClaw y Odoo 19 (ES)](GUIA_CREACION_SKILLS_ODOOCLAW_ODOO19_ES.md): Arquitectura, seguridad, pruebas, Docker y checklist reutilizable para nuevas funciones.
 - [Antigravity Usage and Authentication](ANTIGRAVITY_USAGE.md): Integration with the Antigravity cloud.
 - [Browser Copilot + Doodba Setup](BROWSER_COPILOT_DOODBA_SETUP.md): End-to-end setup for pairing flow, per-tab sharing, Chrome/Firefox local testing, plus minimal `prod.yaml` and mount strategy (required vs optional).
 - [Browser Extension Distribution](BROWSER_EXTENSION_DISTRIBUTION.md): Internal packaging, dual-browser ZIP artifacts, and store-readiness notes.
