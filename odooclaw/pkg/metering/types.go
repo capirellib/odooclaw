@@ -12,19 +12,22 @@ type RoutingConfig struct {
 	ClassifierFallback int      `json:"classifier_fallback"`
 	FreeCascade        []string `json:"free_cascade"`
 	PaidCascade        []string `json:"paid_cascade"`
+	PremiumEnabled     bool     `json:"premium_enabled"`
+	AutoPremiumEnabled bool     `json:"auto_premium_enabled"`
 	AllowedModels      []string `json:"allowed_models"`
 }
 
 type AuthorizeResponse struct {
-	OK          bool          `json:"ok"`
-	Error       string        `json:"error,omitempty"`
-	Message     string        `json:"message,omitempty"`
-	PartnerID   int           `json:"partner_id,omitempty"`
-	PartnerName string        `json:"partner_name,omitempty"`
-	Balance     float64       `json:"balance,omitempty"`
-	Markup      float64       `json:"markup,omitempty"`
-	TTL         int           `json:"ttl,omitempty"`
-	Routing     RoutingConfig `json:"routing,omitempty"`
+	OK             bool          `json:"ok"`
+	Error          string        `json:"error,omitempty"`
+	Message        string        `json:"message,omitempty"`
+	PartnerID      int           `json:"partner_id,omitempty"`
+	PartnerName    string        `json:"partner_name,omitempty"`
+	Balance        float64       `json:"balance,omitempty"`
+	Markup         float64       `json:"markup,omitempty"`
+	PremiumEnabled bool          `json:"premium_enabled"`
+	TTL            int           `json:"ttl,omitempty"`
+	Routing        RoutingConfig `json:"routing,omitempty"`
 }
 
 type UsageReport struct {
@@ -44,12 +47,13 @@ type UsageReport struct {
 }
 
 type requestState struct {
-	prompt     string
-	once       sync.Once
-	auth       AuthorizeResponse
-	complexity string
-	source     string
-	err        error
+	prompt         string
+	modelSelection string
+	once           sync.Once
+	auth           AuthorizeResponse
+	complexity     string
+	source         string
+	err            error
 }
 
 type requestKey struct{}
@@ -58,6 +62,19 @@ type requestKey struct{}
 // turn. All tool-loop provider calls reuse that decision.
 func WithRequest(ctx context.Context, prompt string) context.Context {
 	return context.WithValue(ctx, requestKey{}, &requestState{prompt: prompt})
+}
+
+// WithModelSelection attaches an optional Odoo-requested premium model code
+// to the current user turn. Provider-side policy validation is deliberately
+// deferred until authorization returns the customer's allowed cascade.
+func WithModelSelection(ctx context.Context, model string) context.Context {
+	state := stateFromContext(ctx)
+	if state == nil {
+		state = &requestState{}
+		ctx = context.WithValue(ctx, requestKey{}, state)
+	}
+	state.modelSelection = model
+	return ctx
 }
 
 func stateFromContext(ctx context.Context) *requestState {

@@ -71,6 +71,29 @@ func TestServeHTTP_AllowsGroupWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestServeHTTP_PreservesOptionalModelAliasInMetadata(t *testing.T) {
+	messageBus := bus.NewMessageBus()
+	channel, err := NewOdooChannel(config.OdooConfig{AllowGroupMentions: true}, messageBus)
+	if err != nil {
+		t.Fatalf("NewOdooChannel() error = %v", err)
+	}
+
+	body := `{"message_id":105,"model":"discuss.channel","res_id":25,"author_id":7,"author_user_id":8,"author_name":"Mitchell Admin","body":"@odooclaw analiza","is_dm":false,"model_alias":"openai/gpt-5"}`
+	req := httptest.NewRequest(http.MethodPost, "/webhook/odoo", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	channel.ServeHTTP(w, req)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	msg, ok := messageBus.ConsumeInbound(ctx)
+	if !ok {
+		t.Fatal("expected inbound message")
+	}
+	if got := msg.Metadata["model_alias"]; got != "openai/gpt-5" {
+		t.Fatalf("model_alias = %q, want openai/gpt-5", got)
+	}
+}
+
 func TestServeHTTP_GroupMentionWithPrivateReplyTargetUsesDirectSession(t *testing.T) {
 	messageBus := bus.NewMessageBus()
 	channel, err := NewOdooChannel(config.OdooConfig{AllowGroupMentions: true}, messageBus)

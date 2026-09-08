@@ -810,6 +810,12 @@ func (al *AgentLoop) runAgentLoop(
 	opts processOptions,
 ) (string, error) {
 	ctx = metering.WithRequest(ctx, opts.UserMessage)
+	// The Odoo channel can request a premium model code. The metering provider
+	// remains the authority: it accepts only models in the customer's approved
+	// paid cascade, never an arbitrary provider model ID.
+	if opts.Metadata != nil {
+		ctx = metering.WithModelSelection(ctx, opts.Metadata["model_alias"])
+	}
 	// 0. Record last channel for heartbeat notifications (skip internal channels)
 	if opts.Channel != "" && opts.ChatID != "" {
 		// Don't record internal channels (cli, system, subagent)

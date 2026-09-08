@@ -38,6 +38,10 @@ type OdooWebhookPayload struct {
 	IsDM              bool   `json:"is_dm"`
 	CompanyID         int    `json:"company_id"`
 	AllowedCompanyIDs []int  `json:"allowed_company_ids"`
+	// ModelAlias is an optional premium model code selected by Odoo. It is
+	// treated as an untrusted request: the metering policy validates it against
+	// the customer's allowed premium cascade before it reaches a provider.
+	ModelAlias string `json:"model_alias,omitempty"`
 }
 
 type OdooReplyPayload struct {
@@ -237,6 +241,9 @@ func (c *OdooChannel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"res_id":       strconv.Itoa(payload.ResID),
 		"reply_model":  replyModel,
 		"reply_res_id": strconv.Itoa(replyResID),
+	}
+	if modelAlias := strings.TrimSpace(payload.ModelAlias); modelAlias != "" {
+		metadata["model_alias"] = modelAlias
 	}
 	if payload.CompanyID > 0 {
 		metadata["company_id"] = strconv.Itoa(payload.CompanyID)

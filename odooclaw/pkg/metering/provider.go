@@ -77,7 +77,7 @@ func (p *Provider) Chat(ctx context.Context, messages []providers.Message, tools
 		return nil, state.err
 	}
 
-	models := routedModels(requestedModel, state.complexity, state.auth.Routing)
+	models := routedModels(requestedModel, state.modelSelection, state.complexity, state.auth.Routing)
 	var lastErr error
 	for _, model := range models {
 		response, err := p.delegate.Chat(ctx, messages, tools, model, options)
@@ -142,9 +142,28 @@ func parseComplexity(value string) string {
 	return ""
 }
 
-func routedModels(requested, complexity string, routing RoutingConfig) []string {
+// routedModels selects the automatic cascade unless Odoo explicitly requested
+// a model in the customer's paid cascade. A request is never sufficient on its
+// own: it must also comply with the allow-list returned by the control plane.
+func routedModels(requested, selected, complexity string, routing RoutingConfig) []string {
+	selected = strings.TrimSpace(selected)
+	if selected != "" {
+		paid := make(map[string]bool, len(routing.PaidCascade))
+		for _, model := range routing.PaidCascade {
+			paid[strings.TrimSpace(model)] = true
+		}
+		allowed := make(map[string]bool, len(routing.AllowedModels))
+		for _, model := range routing.AllowedModels {
+			allowed[strings.TrimSpace(model)] = true
+		}
+		if routing.PremiumEnabled && paid[selected] && (len(allowed) == 0 || allowed[selected]) {
+			return []string{selected}
+		}
+		return nil
+	}
+
 	models := routing.FreeCascade
-	if complexity == "2" {
+	if complexity == "2" && routing.PremiumEnabled && routing.AutoPremiumEnabled {
 		models = routing.PaidCascade
 	}
 	allowed := make(map[string]bool, len(routing.AllowedModels))

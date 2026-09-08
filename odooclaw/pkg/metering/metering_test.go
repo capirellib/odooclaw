@@ -110,7 +110,7 @@ func TestProviderUsesOdooRoutingAndQueuesBothCalls(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/authorize":
 			authorizeCalls.Add(1)
-			_ = json.NewEncoder(w).Encode(AuthorizeResponse{OK: true, TTL: 45, Routing: RoutingConfig{ClassifierEnabled: true, ClassifierModel: "classifier", ClassifierTimeout: 1, ClassifierFallback: 2, FreeCascade: []string{"free"}, PaidCascade: []string{"paid"}}})
+			_ = json.NewEncoder(w).Encode(AuthorizeResponse{OK: true, TTL: 45, Routing: RoutingConfig{ClassifierEnabled: true, ClassifierModel: "classifier", ClassifierTimeout: 1, ClassifierFallback: 2, FreeCascade: []string{"free"}, PaidCascade: []string{"paid"}, PremiumEnabled: true, AutoPremiumEnabled: true}})
 		case "/api/v1/usage":
 			usageCalls.Add(1)
 			_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
@@ -152,5 +152,38 @@ func TestParseComplexity(t *testing.T) {
 		if got := parseComplexity(input); got != want {
 			t.Errorf("parseComplexity(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+func TestRoutedModels_ExplicitPremiumSelectionMustBeInAllowedCascade(t *testing.T) {
+	routing := RoutingConfig{
+		FreeCascade:    []string{"openrouter/free"},
+		PaidCascade:    []string{"openai/gpt-5", "anthropic/claude-sonnet"},
+		AllowedModels:  []string{"openai/gpt-5"},
+		PremiumEnabled: true,
+	}
+
+	if got := routedModels("default", "openai/gpt-5", "1", routing); len(got) != 1 || got[0] != "openai/gpt-5" {
+		t.Fatalf("allowed explicit selection = %v, want [openai/gpt-5]", got)
+	}
+	if got := routedModels("default", "anthropic/claude-sonnet", "2", routing); len(got) != 0 {
+		t.Fatalf("non-allowed explicit selection = %v, want none", got)
+	}
+	if got := routedModels("default", "attacker/arbitrary-model", "2", routing); len(got) != 0 {
+		t.Fatalf("unknown explicit selection = %v, want none", got)
+	}
+}
+
+func TestRoutedModels_UsesFreeUntilPremiumIsEnabled(t *testing.T) {
+	routing := RoutingConfig{
+		FreeCascade:    []string{"openrouter/free"},
+		PaidCascade:    []string{"openai/gpt-5"},
+		PremiumEnabled: false,
+	}
+	if got := routedModels("default", "", "2", routing); len(got) != 1 || got[0] != "openrouter/free" {
+		t.Fatalf("automatic route without premium credit = %v, want [openrouter/free]", got)
+	}
+	if got := routedModels("default", "openai/gpt-5", "1", routing); len(got) != 0 {
+		t.Fatalf("explicit premium without credit = %v, want none", got)
 	}
 }
