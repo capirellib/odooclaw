@@ -78,6 +78,9 @@ func (p *Provider) Chat(ctx context.Context, messages []providers.Message, tools
 	}
 
 	models := routedModels(requestedModel, state.modelSelection, state.complexity, state.auth.Routing)
+	if len(models) == 0 && strings.TrimSpace(state.modelSelection) != "" && !state.auth.Routing.PremiumEnabled {
+		return nil, errors.New("Tu credito para funciones avanzadas se agoto. La IA estandar gratuita sigue disponible. Para usar OCR, procesar facturas escaneadas o elegir un modelo avanzado, recarga tu saldo desde Odoo o solicita autorizacion a tu administrador.")
+	}
 	var lastErr error
 	for _, model := range models {
 		response, err := p.delegate.Chat(ctx, messages, tools, model, options)

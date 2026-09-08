@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -185,5 +186,30 @@ func TestRoutedModels_UsesFreeUntilPremiumIsEnabled(t *testing.T) {
 	}
 	if got := routedModels("default", "openai/gpt-5", "1", routing); len(got) != 0 {
 		t.Fatalf("explicit premium without credit = %v, want none", got)
+	}
+}
+
+func TestProviderExplainsPremiumCreditExhaustion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(AuthorizeResponse{
+			OK:  true,
+			TTL: 1,
+			Routing: RoutingConfig{
+				FreeCascade:    []string{"openrouter/free"},
+				PaidCascade:    []string{"openai/gpt-5"},
+				PremiumEnabled: false,
+			},
+		})
+	}))
+	defer server.Close()
+	wrapped, err := Wrap(config.MeteringConfig{Enabled: true, OdooURL: server.URL, ServiceToken: "secret", CustomerToken: "bai-client", QueuePath: filepath.Join(t.TempDir(), "queue.sqlite"), HTTPTimeoutSeconds: 1}, t.TempDir(), &fakeProvider{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer wrapped.(*Provider).Close()
+	ctx := WithModelSelection(WithRequest(context.Background(), "read this invoice"), "openai/gpt-5")
+	_, err = wrapped.Chat(ctx, []providers.Message{{Role: "user", Content: "read this invoice"}}, nil, "default", nil)
+	if err == nil || !strings.Contains(err.Error(), "IA estandar gratuita sigue disponible") {
+		t.Fatalf("premium exhaustion error = %v", err)
 	}
 }
