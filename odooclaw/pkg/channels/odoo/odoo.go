@@ -151,6 +151,16 @@ func (c *OdooChannel) WebhookPath() string {
 }
 
 func (c *OdooChannel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Odoo may query the active OpenRouter key status through the same private
+	// channel webhook. The key is never returned to Odoo.
+	if r.Method == http.MethodGet && r.URL.Query().Get("action") == "credit_status" {
+		if c.config.WebhookToken != "" && r.Header.Get("X-OdooClaw-Token") != c.config.WebhookToken {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		c.handleCreditStatus(w, r)
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -258,4 +268,45 @@ func (c *OdooChannel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"ok"}`))
+}
+
+func (c *OdooChannel) handleCreditStatus(w http.ResponseWriter, r *http.Request) {
+	apiKey := strings.TrimSpace(os.Getenv("ODOOCLAW_PROVIDERS_OPENROUTER_API_KEY"))
+	if apiKey == "" {
+		http.Error(w, "OpenRouter API key is not configured through the environment", http.StatusServiceUnavailable)
+		return
+	}
+	apiBase := strings.TrimSuffix(strings.TrimSpace(os.Getenv("ODOOCLAW_PROVIDERS_OPENROUTER_API_BASE")), "/")
+	if apiBase == "" {
+		apiBase = "https://openrouter.ai/api/v1"
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, apiBase+"/key", nil)
+	if err != nil {
+		http.Error(w, "Unable to create OpenRouter request", http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		http.Error(w, "Unable to contact OpenRouter", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		http.Error(w, "OpenRouter rejected the credit query", http.StatusBadGateway)
+		return
+	}
+	var payload struct {
+		Data struct {
+			LimitRemaining float64 `json:"limit_remaining"`
+			Limit          float64 `json:"limit"`
+			LimitReset     string  `json:"limit_reset"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		http.Error(w, "Invalid OpenRouter response", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"balance": payload.Data.LimitRemaining, "limit": payload.Data.Limit, "reset": payload.Data.LimitReset})
 }
