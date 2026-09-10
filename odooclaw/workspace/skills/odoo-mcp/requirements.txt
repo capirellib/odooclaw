@@ -1,5 +1,23 @@
+# Dependencias del servidor MCP de Odoo.
+#
+# El codigo de src/ solo importa tres paquetes de terceros: mcp, pydantic y
+# requests. El Dockerfile los instala en una capa aparte que SI debe romper el
+# build si falla, porque sin ellos el servidor muere al importar y el gateway
+# solo reporta 'EOF'.
+#
+# El resto de esta lista son extras de herramientas puntuales (OCR, planillas,
+# analisis). Se instalan en una segunda capa que tolera fallos: varios compilan
+# desde fuente bajo musl y romperian el build sin impedir que el servidor
+# arranque.
+#
+# Antes de agregar algo aca, verifica si el codigo realmente lo importa.
+
 apispec
 dateparser
+# server.py usa la API v1 (from mcp.server.fastmcp import FastMCP).
+# En mcp 2.x FastMCP paso a llamarse MCPServer, asi que sin este pin pip
+# instala la 2.x y el servidor muere al importar: el gateway solo ve 'EOF'.
+mcp<2
 fastmcp>=0.1.0
 git+https://github.com/OCA/openupgradelib.git@master
 langchain-core
