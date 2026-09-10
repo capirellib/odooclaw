@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync/atomic"
 
 	"github.com/caarlos0/env/v11"
@@ -734,6 +735,12 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if cfg.Metering.Database == "" {
 		cfg.Metering.Database = os.Getenv("ODOO_DB")
+	}
+	// Single shared secret: the control plane reuses the Odoo channel webhook
+	// token unless a metering-specific one was set. Keeping one value avoids
+	// asking operators to place two different secrets in the Odoo instance.
+	if strings.TrimSpace(cfg.Metering.ServiceToken) == "" {
+		cfg.Metering.ServiceToken = cfg.Channels.Odoo.WebhookToken
 	}
 
 	// Migrate legacy channel config fields to new unified structures

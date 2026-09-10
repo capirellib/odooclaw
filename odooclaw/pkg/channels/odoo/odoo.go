@@ -143,6 +143,113 @@ func buildReplyEndpoint(odooURL, targetDB, fallbackEnvDB string) string {
 	return endpoint
 }
 
+// openRouterBase returns the provider base URL, defaulting to the public API.
+func (c *OdooChannel) openRouterBase() string {
+	base := strings.TrimSuffix(strings.TrimSpace(os.Getenv("ODOOCLAW_PROVIDERS_OPENROUTER_API_BASE")), "/")
+	if base == "" {
+		base = "https://openrouter.ai/api/v1"
+	}
+	return base
+}
+
+// fetchModelCatalog returns the provider catalog normalised for Odoo, so the
+// Odoo module never has to reach openrouter.ai nor know its response schema.
+func (c *OdooChannel) fetchModelCatalog(ctx context.Context) ([]map[string]any, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.openRouterBase()+"/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	// The catalog is public; the key is only sent when present so that
+	// per-account visibility is honoured.
+	if key := strings.TrimSpace(os.Getenv("ODOOCLAW_PROVIDERS_OPENROUTER_API_KEY")); key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("provider returned HTTP %d", resp.StatusCode)
+	}
+
+	var payload struct {
+		Data []struct {
+			ID            string `json:"id"`
+			Name          string `json:"name"`
+			Description   string `json:"description"`
+			ContextLength int    `json:"context_length"`
+			Architecture  struct {
+				Modality string `json:"modality"`
+			} `json:"architecture"`
+			Pricing struct {
+				Prompt     string `json:"prompt"`
+				Completion string `json:"completion"`
+			} `json:"pricing"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+
+	precio := func(v string) float64 {
+		f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		if err != nil {
+			return 0
+		}
+		return f
+	}
+
+	models := make([]map[string]any, 0, len(payload.Data))
+	for _, m := range payload.Data {
+		if strings.TrimSpace(m.ID) == "" {
+			continue
+		}
+		entrada := precio(m.Pricing.Prompt)
+		salida := precio(m.Pricing.Completion)
+		nombre := m.Name
+		if strings.TrimSpace(nombre) == "" {
+			nombre = m.ID
+		}
+		if len(m.Description) > 2000 {
+			m.Description = m.Description[:2000]
+		}
+		models = append(models, map[string]any{
+			"code":             m.ID,
+			"name":             nombre,
+			"description":      m.Description,
+			"context_length":   m.ContextLength,
+			"modality":         m.Architecture.Modality,
+			"prompt_price":     entrada,
+			"completion_price": salida,
+			"free":             entrada == 0 && salida == 0,
+		})
+	}
+	return models, nil
+}
+
+// handleConfig answers everything the Odoo module needs to operate without
+// holding provider credentials or contacting any third party itself.
+func (c *OdooChannel) handleConfig(w http.ResponseWriter, r *http.Request) {
+	respuesta := map[string]any{
+		"provider":       "openrouter",
+		"target_db":      c.config.TargetDB,
+		"webhook_path":   c.WebhookPath(),
+		"token_required": c.config.WebhookToken != "",
+	}
+
+	if models, err := c.fetchModelCatalog(r.Context()); err != nil {
+		slog.Warn("Could not fetch provider catalog", "error", err)
+		respuesta["models_error"] = err.Error()
+		respuesta["models"] = []map[string]any{}
+	} else {
+		respuesta["models"] = models
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(respuesta)
+}
+
 func (c *OdooChannel) WebhookPath() string {
 	if c.config.WebhookPath != "" {
 		return c.config.WebhookPath
@@ -151,15 +258,25 @@ func (c *OdooChannel) WebhookPath() string {
 }
 
 func (c *OdooChannel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Odoo may query the active OpenRouter key status through the same private
-	// channel webhook. The key is never returned to Odoo.
-	if r.Method == http.MethodGet && r.URL.Query().Get("action") == "credit_status" {
-		if c.config.WebhookToken != "" && r.Header.Get("X-OdooClaw-Token") != c.config.WebhookToken {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	// Odoo queries provider state through this same private channel webhook so
+	// that it never needs the provider credentials itself. No secret is ever
+	// returned: only derived, non-sensitive data.
+	if r.Method == http.MethodGet {
+		if action := r.URL.Query().Get("action"); action != "" {
+			if c.config.WebhookToken != "" && r.Header.Get("X-OdooClaw-Token") != c.config.WebhookToken {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+			switch action {
+			case "credit_status":
+				c.handleCreditStatus(w, r)
+			case "config":
+				c.handleConfig(w, r)
+			default:
+				http.Error(w, "Unknown action", http.StatusNotFound)
+			}
 			return
 		}
-		c.handleCreditStatus(w, r)
-		return
 	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
