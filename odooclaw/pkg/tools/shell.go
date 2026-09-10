@@ -77,7 +77,11 @@ var (
 	}
 
 	// absolutePathPattern matches absolute file paths in commands (Unix and Windows).
-	absolutePathPattern = regexp.MustCompile(`[A-Za-z]:\\[^\\\"']+|/[^\s\"']+`)
+	// The leading boundary matters: without it the "/" inside a relative path
+	// such as "tmp/script.py" matched as if it were the absolute "/script.py",
+	// and the workspace guard rejected perfectly legitimate relative commands.
+	// Group 1 holds the path.
+	absolutePathPattern = regexp.MustCompile(`(?:^|[\s"'=(:])([A-Za-z]:\\[^\\\"']+|/[^\s\"']*)`)
 
 	// safePaths are kernel pseudo-devices that are always safe to reference in
 	// commands, regardless of workspace restriction. They contain no user data
@@ -331,9 +335,10 @@ func (t *ExecTool) guardCommand(command, cwd string) string {
 			return ""
 		}
 
-		matches := absolutePathPattern.FindAllString(cmd, -1)
+		matches := absolutePathPattern.FindAllStringSubmatch(cmd, -1)
 
-		for _, raw := range matches {
+		for _, match := range matches {
+			raw := match[1]
 			p, err := filepath.Abs(raw)
 			if err != nil {
 				continue
