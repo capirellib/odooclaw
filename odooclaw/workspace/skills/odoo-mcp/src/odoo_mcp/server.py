@@ -844,10 +844,6 @@ def odoo_create_vendor_invoice(
         )
 
 
-if __name__ == "__main__":
-    mcp.run()
-
-
 @mcp.tool()
 def odoo_find_pending_invoices(
     partner_id: int | None = None,
@@ -2646,3 +2642,11 @@ def odoo_batch_assist_report_migration(
             strict=strict,
             continue_on_error=continue_on_error,
         )
+
+
+# Este bloque va al FINAL del archivo a proposito: mcp.run() bloquea
+# atendiendo el protocolo, asi que cualquier @mcp.tool declarado despues
+# nunca llega a registrarse. Estuvo en la linea 847 y dejaba 97 de las 124
+# herramientas fuera, sin ningun error visible.
+if __name__ == "__main__":
+    mcp.run()
