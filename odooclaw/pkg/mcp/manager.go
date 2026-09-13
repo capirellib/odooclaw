@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -547,7 +549,7 @@ func (m *Manager) CallTool(
 	}
 
 	result, err := conn.activeSession().CallTool(ctx, params)
-	if errors.Is(err, mcp.ErrSessionMissing) {
+	if isRecoverableSessionError(err) {
 		conn, reconnectErr := m.reconnect(ctx, serverName, conn)
 		if reconnectErr != nil {
 			return nil, fmt.Errorf("failed to reconnect server %s: %w", serverName, reconnectErr)
@@ -559,6 +561,20 @@ func (m *Manager) CallTool(
 	}
 
 	return result, nil
+}
+
+// isRecoverableSessionError identifies transport failures that leave a stdio
+// MCP child dead while the gateway process is still running. The SDK exposes
+// ErrSessionMissing for some cases, but a crashed Python process commonly
+// surfaces as io.EOF (sometimes wrapped by the transport).
+func isRecoverableSessionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, mcp.ErrSessionMissing) || errors.Is(err, io.EOF) {
+		return true
+	}
+	return false
 }
 
 func (m *Manager) reconnect(
@@ -616,7 +632,32 @@ func (m *Manager) runReconnect(
 ) {
 	defer m.wg.Done()
 
-	fresh, connectErr := m.connector(m.lifecycle, serverName, stale.config)
+	var fresh *ServerConnection
+	var connectErr error
+	backoff := []time.Duration{0, time.Second, 3 * time.Second, 10 * time.Second}
+	for attempt, delay := range backoff {
+		if delay > 0 {
+			timer := time.NewTimer(delay)
+			select {
+			case <-m.lifecycle.Done():
+				timer.Stop()
+				connectErr = m.lifecycle.Err()
+				attempt = len(backoff)
+			case <-timer.C:
+			}
+			if attempt >= len(backoff) {
+				break
+			}
+		}
+		fresh, connectErr = m.connector(m.lifecycle, serverName, stale.config)
+		if connectErr == nil && fresh != nil {
+			break
+		}
+		if fresh != nil {
+			_ = fresh.activeSession().Close()
+			fresh = nil
+		}
+	}
 
 	var closeFresh, closeStale *ServerConnection
 	m.mu.Lock()
