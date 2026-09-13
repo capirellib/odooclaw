@@ -62,8 +62,8 @@ case "$COMMAND" in
                 PLATFORM_ARG="--platform linux/amd64"
             fi
         fi
-        docker build $PLATFORM_ARG -t odooclaw:latest -f "${BASE_DIR}/Dockerfile" "${BASE_DIR}"
-        echo "✅ Base image built successfully (odooclaw:latest)."
+        docker build $PLATFORM_ARG -t odooclaw:latest -t bettaerp/odooclaw:latest -f "${BASE_DIR}/Dockerfile" "${BASE_DIR}"
+        echo "✅ Base image built successfully (odooclaw:latest & bettaerp/odooclaw:latest)."
         ;;
 
     create)
