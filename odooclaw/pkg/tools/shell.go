@@ -16,6 +16,11 @@ import (
 	"github.com/nicolasramos/odooclaw/pkg/config"
 )
 
+// noOutputMarker is what ExecTool reports for a command that produced no
+// stdout/stderr. CronTool checks for it to decide whether a recurring
+// scheduled command has anything worth posting to chat.
+const noOutputMarker = "(no output)"
+
 type ExecTool struct {
 	workingDir          string
 	timeout             time.Duration
@@ -268,7 +273,7 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]any) *ToolResult
 	}
 
 	if output == "" {
-		output = "(no output)"
+		output = noOutputMarker
 	}
 
 	maxLen := 10000

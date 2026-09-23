@@ -293,6 +293,19 @@ func (t *CronTool) ExecuteJob(ctx context.Context, job *cron.CronJob) string {
 		}
 
 		result := t.execTool.Execute(ctx, args)
+
+		// A recurring command (every_seconds/cron_expr) that ran fine and had
+		// nothing to say stays quiet: otherwise a watchdog-style job floods
+		// the chat forever with "Scheduled command '...' executed: (no
+		// output)" on every single run. Errors always get reported, and a
+		// one-time job (at_seconds) always confirms it ran, since there is
+		// no next run to fall back on.
+		recurring := job.Schedule.Kind == "every" || job.Schedule.Kind == "cron"
+		silent := !result.IsError && strings.TrimSpace(result.ForLLM) == noOutputMarker
+		if recurring && silent {
+			return "ok"
+		}
+
 		var output string
 		if result.IsError {
 			output = fmt.Sprintf("Error executing scheduled command: %s", result.ForLLM)
