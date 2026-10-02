@@ -77,7 +77,7 @@ func NewContextBuilder(workspace string) *ContextBuilder {
 func (cb *ContextBuilder) getIdentity() string {
 	workspacePath, _ := filepath.Abs(filepath.Join(cb.workspace))
 
-	return fmt.Sprintf(`# odooclaw 🦞
+	return fmt.Sprintf(`# odooclaw
 
 You are odooclaw, a helpful AI assistant.
 
