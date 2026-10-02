@@ -140,6 +140,16 @@ func gatewayCmd(debug bool) error {
 	agentLoop.SetChannelManager(channelManager)
 	agentLoop.SetMediaStore(mediaStore)
 
+	// The website chat answers visitors with the same provider, but through a
+	// tool-free path of the agent loop.
+	if ch, ok := channelManager.GetChannel("odoo"); ok {
+		if pc, ok := ch.(interface {
+			SetPublicChat(func(context.Context, []providers.Message) (string, error))
+		}); ok {
+			pc.SetPublicChat(agentLoop.CompletePublic)
+		}
+	}
+
 	enabledChannels := channelManager.GetEnabledChannels()
 	if len(enabledChannels) > 0 {
 		fmt.Printf("✓ Channels enabled: %s\n", enabledChannels)

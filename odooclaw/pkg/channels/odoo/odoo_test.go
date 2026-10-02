@@ -10,6 +10,7 @@ import (
 
 	"github.com/nicolasramos/odooclaw/pkg/bus"
 	"github.com/nicolasramos/odooclaw/pkg/config"
+	"github.com/nicolasramos/odooclaw/pkg/providers"
 )
 
 func TestServeHTTP_IgnoresGroupWhenDisabled(t *testing.T) {
@@ -182,5 +183,45 @@ func TestBuildReplyEndpoint_NoDB(t *testing.T) {
 	want := "http://odoo:8069/odooclaw/reply"
 	if got != want {
 		t.Fatalf("buildReplyEndpoint() = %q, want %q", got, want)
+	}
+}
+
+func TestPublicChatIsToolFreeAndValidated(t *testing.T) {
+	ch := &OdooChannel{config: config.OdooConfig{WebhookToken: "tok"}}
+	post := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/webhook/odoo?action=public_chat", strings.NewReader(body))
+		req.Header.Set("X-OdooClaw-Token", "tok")
+		rec := httptest.NewRecorder()
+		ch.ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := post(`{"messages":[{"role":"user","content":"hola"}]}`); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("without a handler want 503, got %d", rec.Code)
+	}
+
+	var got []providers.Message
+	ch.SetPublicChat(func(_ context.Context, m []providers.Message) (string, error) {
+		got = m
+		return "respuesta", nil
+	})
+	rec := post(`{"messages":[{"role":"system","content":"reglas"},{"role":"user","content":"hola"}]}`)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"content":"respuesta"`) {
+		t.Fatalf("unexpected response %d %s", rec.Code, rec.Body.String())
+	}
+	if len(got) != 2 {
+		t.Fatalf("handler got %d messages", len(got))
+	}
+	if rec := post(`{"messages":[{"role":"tool","content":"x"}]}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("tool role must be rejected, got %d", rec.Code)
+	}
+	if rec := post(`{"messages":[]}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty must be rejected, got %d", rec.Code)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/webhook/odoo?action=public_chat", strings.NewReader(`{}`))
+	rec = httptest.NewRecorder()
+	ch.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("missing token must be 401, got %d", rec.Code)
 	}
 }

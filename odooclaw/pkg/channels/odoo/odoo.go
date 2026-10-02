@@ -16,6 +16,7 @@ import (
 	"github.com/nicolasramos/odooclaw/pkg/bus"
 	"github.com/nicolasramos/odooclaw/pkg/channels"
 	"github.com/nicolasramos/odooclaw/pkg/config"
+	"github.com/nicolasramos/odooclaw/pkg/providers"
 	"github.com/nicolasramos/odooclaw/pkg/utils"
 )
 
@@ -23,6 +24,16 @@ type OdooChannel struct {
 	*channels.BaseChannel
 	config config.OdooConfig
 	client *http.Client
+	// publicChat answers website visitors without tools; set by the gateway.
+	publicChat PublicChatFunc
+}
+
+// PublicChatFunc runs a tool-free completion with the agent's provider.
+type PublicChatFunc = func(ctx context.Context, messages []providers.Message) (string, error)
+
+// SetPublicChat enables the restricted website chat endpoint.
+func (c *OdooChannel) SetPublicChat(fn func(context.Context, []providers.Message) (string, error)) {
+	c.publicChat = fn
 }
 
 type OdooWebhookPayload struct {
@@ -298,6 +309,11 @@ func (c *OdooChannel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if r.URL.Query().Get("action") == "public_chat" {
+		c.handlePublicChat(w, r, body)
+		return
+	}
+
 	var payload OdooWebhookPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
 		slog.Error("Failed to parse Odoo webhook", "error", err)
@@ -426,4 +442,54 @@ func (c *OdooChannel) handleCreditStatus(w http.ResponseWriter, r *http.Request)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"balance": payload.Data.LimitRemaining, "limit": payload.Data.Limit, "reset": payload.Data.LimitReset})
+}
+
+const (
+	publicChatMaxMessages = 30
+	publicChatMaxChars    = 24000
+)
+
+// handlePublicChat serves the website chat: Odoo sends the prompt it built
+// (rules, store data, history) and gets text back. Only system/user/assistant
+// roles are accepted and no tool is ever offered, so a visitor cannot make the
+// agent act on anything.
+func (c *OdooChannel) handlePublicChat(w http.ResponseWriter, r *http.Request, body []byte) {
+	if c.publicChat == nil {
+		http.Error(w, "Public chat is not available", http.StatusServiceUnavailable)
+		return
+	}
+	var req struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil || len(req.Messages) == 0 || len(req.Messages) > publicChatMaxMessages {
+		http.Error(w, "Invalid messages", http.StatusBadRequest)
+		return
+	}
+	messages := make([]providers.Message, 0, len(req.Messages))
+	total := 0
+	for _, m := range req.Messages {
+		if m.Role != "system" && m.Role != "user" && m.Role != "assistant" {
+			http.Error(w, "Invalid role", http.StatusBadRequest)
+			return
+		}
+		total += len(m.Content)
+		messages = append(messages, providers.Message{Role: m.Role, Content: m.Content})
+	}
+	if total > publicChatMaxChars {
+		http.Error(w, "Messages too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	content, err := c.publicChat(ctx, messages)
+	if err != nil {
+		slog.Warn("Public chat completion failed", "error", err)
+		http.Error(w, "Completion failed", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"content": content})
 }

@@ -366,6 +366,33 @@ func (al *AgentLoop) RegisterTool(tool tools.Tool) {
 	}
 }
 
+// CompletePublic answers one request from an anonymous website visitor with the
+// default agent's own provider and model, so it shares the configured key and
+// the metering. It is deliberately not an agent turn: no tools, no session, no
+// memory and no workspace context, so the visitor can only get text back.
+func (al *AgentLoop) CompletePublic(ctx context.Context, messages []providers.Message) (string, error) {
+	agent := al.registry.GetDefaultAgent()
+	if agent == nil {
+		return "", errors.New("no agent available")
+	}
+	lastUser := ""
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "user" {
+			lastUser = messages[i].Content
+			break
+		}
+	}
+	ctx = metering.WithRequest(ctx, lastUser)
+	resp, err := agent.Provider.Chat(ctx, messages, nil, agent.Model, map[string]any{
+		"max_tokens":  500,
+		"temperature": 0.3,
+	})
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(utils.RemoveReasoning(resp.Content)), nil
+}
+
 func (al *AgentLoop) SetChannelManager(cm *channels.Manager) {
 	al.channelManager = cm
 }
