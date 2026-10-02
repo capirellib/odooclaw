@@ -1562,3 +1562,9 @@
 # Internal planning docs
 docs/slices/
 .atl/
+
+# macOS
+.DS_Store
+*.DS_Store
+**/.DS_Store
+
