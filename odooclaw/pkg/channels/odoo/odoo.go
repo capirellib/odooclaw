@@ -29,10 +29,10 @@ type OdooChannel struct {
 }
 
 // PublicChatFunc runs a tool-free completion with the agent's provider.
-type PublicChatFunc = func(ctx context.Context, messages []providers.Message) (string, error)
+type PublicChatFunc = func(ctx context.Context, messages []providers.Message, maxTokens int) (string, error)
 
 // SetPublicChat enables the restricted website chat endpoint.
-func (c *OdooChannel) SetPublicChat(fn func(context.Context, []providers.Message) (string, error)) {
+func (c *OdooChannel) SetPublicChat(fn func(context.Context, []providers.Message, int) (string, error)) {
 	c.publicChat = fn
 }
 
@@ -445,8 +445,10 @@ func (c *OdooChannel) handleCreditStatus(w http.ResponseWriter, r *http.Request)
 }
 
 const (
-	publicChatMaxMessages = 30
-	publicChatMaxChars    = 24000
+	publicChatMaxMessages  = 30
+	publicChatMaxChars     = 24000
+	publicChatDefaultReply = 500
+	publicChatMaxReply     = 1500
 )
 
 // handlePublicChat serves the website chat: Odoo sends the prompt it built
@@ -459,7 +461,8 @@ func (c *OdooChannel) handlePublicChat(w http.ResponseWriter, r *http.Request, b
 		return
 	}
 	var req struct {
-		Messages []struct {
+		MaxTokens int `json:"max_tokens"`
+		Messages  []struct {
 			Role    string `json:"role"`
 			Content string `json:"content"`
 		} `json:"messages"`
@@ -484,7 +487,15 @@ func (c *OdooChannel) handlePublicChat(w http.ResponseWriter, r *http.Request, b
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
-	content, err := c.publicChat(ctx, messages)
+	// Odoo may ask for a longer answer (product links are long); never unbounded.
+	maxTokens := req.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = publicChatDefaultReply
+	}
+	if maxTokens > publicChatMaxReply {
+		maxTokens = publicChatMaxReply
+	}
+	content, err := c.publicChat(ctx, messages, maxTokens)
 	if err != nil {
 		slog.Warn("Public chat completion failed", "error", err)
 		http.Error(w, "Completion failed", http.StatusBadGateway)

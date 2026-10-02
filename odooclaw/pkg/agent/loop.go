@@ -370,7 +370,7 @@ func (al *AgentLoop) RegisterTool(tool tools.Tool) {
 // default agent's own provider and model, so it shares the configured key and
 // the metering. It is deliberately not an agent turn: no tools, no session, no
 // memory and no workspace context, so the visitor can only get text back.
-func (al *AgentLoop) CompletePublic(ctx context.Context, messages []providers.Message) (string, error) {
+func (al *AgentLoop) CompletePublic(ctx context.Context, messages []providers.Message, maxTokens int) (string, error) {
 	agent := al.registry.GetDefaultAgent()
 	if agent == nil {
 		return "", errors.New("no agent available")
@@ -384,7 +384,7 @@ func (al *AgentLoop) CompletePublic(ctx context.Context, messages []providers.Me
 	}
 	ctx = metering.WithRequest(ctx, lastUser)
 	resp, err := agent.Provider.Chat(ctx, messages, nil, agent.Model, map[string]any{
-		"max_tokens":  500,
+		"max_tokens":  maxTokens,
 		"temperature": 0.3,
 	})
 	if err != nil {

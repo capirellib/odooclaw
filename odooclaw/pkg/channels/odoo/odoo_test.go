@@ -201,8 +201,10 @@ func TestPublicChatIsToolFreeAndValidated(t *testing.T) {
 	}
 
 	var got []providers.Message
-	ch.SetPublicChat(func(_ context.Context, m []providers.Message) (string, error) {
+	var gotMax int
+	ch.SetPublicChat(func(_ context.Context, m []providers.Message, maxTokens int) (string, error) {
 		got = m
+		gotMax = maxTokens
 		return "respuesta", nil
 	})
 	rec := post(`{"messages":[{"role":"system","content":"reglas"},{"role":"user","content":"hola"}]}`)
@@ -211,6 +213,17 @@ func TestPublicChatIsToolFreeAndValidated(t *testing.T) {
 	}
 	if len(got) != 2 {
 		t.Fatalf("handler got %d messages", len(got))
+	}
+	if gotMax != 500 {
+		t.Fatalf("default max tokens want 500, got %d", gotMax)
+	}
+	post(`{"max_tokens":900,"messages":[{"role":"user","content":"hola"}]}`)
+	if gotMax != 900 {
+		t.Fatalf("requested max tokens want 900, got %d", gotMax)
+	}
+	post(`{"max_tokens":999999,"messages":[{"role":"user","content":"hola"}]}`)
+	if gotMax != 1500 {
+		t.Fatalf("max tokens must be clamped to 1500, got %d", gotMax)
 	}
 	if rec := post(`{"messages":[{"role":"tool","content":"x"}]}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("tool role must be rejected, got %d", rec.Code)

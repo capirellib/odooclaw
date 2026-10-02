@@ -144,7 +144,7 @@ func gatewayCmd(debug bool) error {
 	// tool-free path of the agent loop.
 	if ch, ok := channelManager.GetChannel("odoo"); ok {
 		if pc, ok := ch.(interface {
-			SetPublicChat(func(context.Context, []providers.Message) (string, error))
+			SetPublicChat(func(context.Context, []providers.Message, int) (string, error))
 		}); ok {
 			pc.SetPublicChat(agentLoop.CompletePublic)
 		}
