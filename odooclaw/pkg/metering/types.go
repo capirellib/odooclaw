@@ -15,6 +15,12 @@ type RoutingConfig struct {
 	PremiumEnabled     bool     `json:"premium_enabled"`
 	AutoPremiumEnabled bool     `json:"auto_premium_enabled"`
 	AllowedModels      []string `json:"allowed_models"`
+	// Base AI: what a customer without credit keeps. Odoo sends the answer
+	// cap, the allowance left this month and the text that tells the
+	// customer how to get credit.
+	BaseMaxTokens int     `json:"base_max_tokens,omitempty"`
+	BaseRemaining float64 `json:"base_remaining,omitempty"`
+	PremiumNotice string  `json:"premium_notice,omitempty"`
 }
 
 type AuthorizeResponse struct {
@@ -41,6 +47,7 @@ type UsageReport struct {
 	TotalTokens      int     `json:"total_tokens,omitempty"`
 	Cost             float64 `json:"cost"`
 	Complexity       string  `json:"complexity,omitempty"`
+	Tier             string  `json:"tier,omitempty"` // "base" or "premium"
 	ClassifierSource string  `json:"classifier_source,omitempty"`
 	HTTPStatus       int     `json:"http_status,omitempty"`
 	Error            string  `json:"error,omitempty"`
@@ -54,6 +61,9 @@ type requestState struct {
 	complexity     string
 	source         string
 	err            error
+	// noticeShown keeps the "needs credit" notice to one per user turn: a
+	// tool loop calls Chat several times for the same request.
+	noticeShown bool
 }
 
 type requestKey struct{}

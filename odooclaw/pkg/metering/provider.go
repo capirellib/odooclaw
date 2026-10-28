@@ -71,15 +71,41 @@ func (p *Provider) Chat(ctx context.Context, messages []providers.Message, tools
 			state.err = fmt.Errorf("authorization denied: %s", message)
 			return
 		}
+		// An image or a document needs a vision/OCR model: an advanced
+		// feature, whatever the classifier would say about the text.
+		if hasMedia(messages) {
+			state.complexity, state.source = "2", "media"
+			return
+		}
 		state.complexity, state.source, state.err = p.classify(ctx, state.prompt, state.auth.Routing)
 	})
 	if state.err != nil {
 		return nil, state.err
 	}
+	routing := state.auth.Routing
+	explicit := strings.TrimSpace(state.modelSelection) != ""
 
-	models := routedModels(requestedModel, state.modelSelection, state.complexity, state.auth.Routing)
-	if len(models) == 0 && strings.TrimSpace(state.modelSelection) != "" && !state.auth.Routing.PremiumEnabled {
-		return nil, errors.New("Tu credito para funciones avanzadas se agoto. La IA estandar gratuita sigue disponible. Para usar OCR, procesar facturas escaneadas o elegir un modelo avanzado, recarga tu saldo desde Odoo o solicita autorizacion a tu administrador.")
+	// Advanced features without credit: an explicit premium model or an
+	// image/document cannot be served by the base AI, so nothing is called
+	// and the customer is told how to get credit. Odoo logs the attempt and
+	// alerts the reseller's sales side.
+	if !routing.PremiumEnabled && (explicit || state.source == "media") {
+		if err := p.enqueueRequired(requestedModel, state); err != nil {
+			return nil, err
+		}
+		return &providers.LLMResponse{Content: premiumNotice(routing), FinishReason: "stop"}, nil
+	}
+
+	models := routedModels(requestedModel, state.modelSelection, state.complexity, routing)
+	if state.source == "media" && routing.PremiumEnabled && !explicit {
+		models = routedModels(requestedModel, "", "2", RoutingConfig{
+			FreeCascade: routing.FreeCascade, PaidCascade: routing.PaidCascade,
+			PremiumEnabled: true, AutoPremiumEnabled: true, AllowedModels: routing.AllowedModels,
+		})
+	}
+	tier := tierOf(models, routing)
+	if tier == "base" {
+		options = capTokens(options, routing.BaseMaxTokens)
 	}
 	var lastErr error
 	for _, model := range models {
@@ -88,8 +114,15 @@ func (p *Provider) Chat(ctx context.Context, messages []providers.Message, tools
 			lastErr = err
 			continue
 		}
-		if err := p.enqueueResponse(response, requestedModel, model, state.complexity, state.source); err != nil {
+		if err := p.enqueueResponse(response, requestedModel, model, state.complexity, state.source, tier); err != nil {
 			return nil, fmt.Errorf("persist usage before returning provider response: %w", err)
+		}
+		// A complex request answered by the base AI: say once, at the end of
+		// the final answer, that more is available with credit.
+		if tier == "base" && state.complexity == "2" && !routing.PremiumEnabled &&
+			len(response.ToolCalls) == 0 && !state.noticeShown {
+			state.noticeShown = true
+			response.Content = strings.TrimRight(response.Content, "\n") + "\n\n---\n" + premiumNotice(routing)
 		}
 		return response, nil
 	}
@@ -97,6 +130,77 @@ func (p *Provider) Chat(ctx context.Context, messages []providers.Message, tools
 		lastErr = errors.New("no model available after applying routing policy")
 	}
 	return nil, lastErr
+}
+
+// defaultPremiumNotice is used when Odoo sends no text of its own.
+const defaultPremiumNotice = "Esta consulta necesita funciones avanzadas de IA (consultas complejas, imágenes u OCR). " +
+	"La IA base sigue disponible para consultas simples. Para ampliar tu uso, comunicate con tu proveedor para obtener créditos."
+
+func premiumNotice(routing RoutingConfig) string {
+	if notice := strings.TrimSpace(routing.PremiumNotice); notice != "" {
+		return notice
+	}
+	return defaultPremiumNotice
+}
+
+// hasMedia reports whether the current user turn carries an image or file.
+func hasMedia(messages []providers.Message) bool {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "user" {
+			return len(messages[i].Media) > 0
+		}
+	}
+	return false
+}
+
+// tierOf tells whether the chosen models are the paid cascade (premium) or
+// the economic one (base). It is what Odoo uses to let the monthly base
+// allowance pay first.
+func tierOf(models []string, routing RoutingConfig) string {
+	paid := make(map[string]bool, len(routing.PaidCascade))
+	for _, model := range routing.PaidCascade {
+		paid[strings.TrimSpace(model)] = true
+	}
+	for _, model := range models {
+		if paid[model] {
+			return "premium"
+		}
+	}
+	return "base"
+}
+
+// capTokens limits the answer of a base request. It copies options so the
+// caller's map, shared across the tool loop, is never changed.
+func capTokens(options map[string]any, limit int) map[string]any {
+	if limit <= 0 {
+		return options
+	}
+	out := make(map[string]any, len(options)+1)
+	for k, v := range options {
+		out[k] = v
+	}
+	if current, ok := out["max_tokens"].(int); ok && current > 0 && current <= limit {
+		return out
+	}
+	out["max_tokens"] = limit
+	return out
+}
+
+// enqueueRequired reports a request stopped for lack of credit. Nothing was
+// generated, so it costs nothing; Odoo records it and alerts sales.
+func (p *Provider) enqueueRequired(requestedModel string, state *requestState) error {
+	what := strings.TrimSpace(state.modelSelection)
+	if what == "" {
+		what = "imagen o documento adjunto"
+	}
+	if requestedModel == "" {
+		requestedModel = what
+	}
+	return p.queue.enqueue(UsageReport{
+		Token: p.token, GenerationID: "required-" + uuid.NewString(), ModelRequested: what,
+		Model: requestedModel, Complexity: state.complexity, ClassifierSource: state.source,
+		HTTPStatus: 402, Error: "premium_required",
+	})
 }
 
 func (p *Provider) classify(ctx context.Context, prompt string, routing RoutingConfig) (string, string, error) {
@@ -124,12 +228,12 @@ func (p *Provider) classify(ctx context.Context, prompt string, routing RoutingC
 	complexity := parseComplexity(resp.Content)
 	if complexity == "" {
 		complexity = fallback
-		if err := p.enqueueResponse(resp, routing.ClassifierModel, routing.ClassifierModel, complexity, "fallback"); err != nil {
+		if err := p.enqueueResponse(resp, routing.ClassifierModel, routing.ClassifierModel, complexity, "fallback", "base"); err != nil {
 			return "", "", fmt.Errorf("persist classifier usage: %w", err)
 		}
 		return complexity, "fallback", nil
 	}
-	if err := p.enqueueResponse(resp, routing.ClassifierModel, routing.ClassifierModel, complexity, "llm"); err != nil {
+	if err := p.enqueueResponse(resp, routing.ClassifierModel, routing.ClassifierModel, complexity, "llm", "base"); err != nil {
 		return "", "", fmt.Errorf("persist classifier usage: %w", err)
 	}
 	return complexity, "llm", nil
@@ -189,7 +293,7 @@ func routedModels(requested, selected, complexity string, routing RoutingConfig)
 	return result
 }
 
-func (p *Provider) enqueueResponse(resp *providers.LLMResponse, requestedModel, fallbackModel, complexity, source string) error {
+func (p *Provider) enqueueResponse(resp *providers.LLMResponse, requestedModel, fallbackModel, complexity, source, tier string) error {
 	if resp == nil || resp.Usage == nil {
 		return errors.New("provider response did not include usage")
 	}
@@ -205,7 +309,7 @@ func (p *Provider) enqueueResponse(resp *providers.LLMResponse, requestedModel, 
 		Token: p.token, GenerationID: id, ModelRequested: requestedModel, Model: model,
 		PromptTokens: resp.Usage.PromptTokens, CompletionTokens: resp.Usage.CompletionTokens,
 		TotalTokens: resp.Usage.TotalTokens, Cost: resp.Usage.Cost,
-		Complexity: complexity, ClassifierSource: source, HTTPStatus: 200,
+		Complexity: complexity, ClassifierSource: source, Tier: tier, HTTPStatus: 200,
 	})
 }
 

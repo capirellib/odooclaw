@@ -3,6 +3,7 @@ package metering
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -208,8 +209,167 @@ func TestProviderExplainsPremiumCreditExhaustion(t *testing.T) {
 	}
 	defer wrapped.(*Provider).Close()
 	ctx := WithModelSelection(WithRequest(context.Background(), "read this invoice"), "openai/gpt-5")
-	_, err = wrapped.Chat(ctx, []providers.Message{{Role: "user", Content: "read this invoice"}}, nil, "default", nil)
-	if err == nil || !strings.Contains(err.Error(), "IA estandar gratuita sigue disponible") {
-		t.Fatalf("premium exhaustion error = %v", err)
+	resp, err := wrapped.Chat(ctx, []providers.Message{{Role: "user", Content: "read this invoice"}}, nil, "default", nil)
+	if err != nil || !strings.Contains(resp.Content, "IA base sigue disponible") {
+		t.Fatalf("premium exhaustion answer = %v / %v", resp, err)
+	}
+}
+
+// tierServer serves a fixed routing and records every usage report.
+func tierServer(t *testing.T, routing RoutingConfig) (*httptest.Server, *[]UsageReport, *sync.Mutex) {
+	t.Helper()
+	var mu sync.Mutex
+	var reports []UsageReport
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/authorize":
+			_ = json.NewEncoder(w).Encode(AuthorizeResponse{OK: true, TTL: 1, Routing: routing})
+		case "/api/v1/usage":
+			var report UsageReport
+			_ = json.NewDecoder(r.Body).Decode(&report)
+			mu.Lock()
+			reports = append(reports, report)
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server, &reports, &mu
+}
+
+func waitReports(t *testing.T, reports *[]UsageReport, mu *sync.Mutex, want int) []UsageReport {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		got := append([]UsageReport(nil), (*reports)...)
+		mu.Unlock()
+		if len(got) >= want {
+			return got
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("expected %d usage reports", want)
+	return nil
+}
+
+// recordingProvider answers with the classifier verdict first, then text,
+// and keeps the options each call received.
+type recordingProvider struct {
+	mu      sync.Mutex
+	verdict string
+	models  []string
+	options []map[string]any
+}
+
+func (f *recordingProvider) GetDefaultModel() string { return "default" }
+func (f *recordingProvider) Chat(_ context.Context, _ []providers.Message, _ []providers.ToolDefinition, model string, options map[string]any) (*providers.LLMResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.models = append(f.models, model)
+	f.options = append(f.options, options)
+	content := "answer"
+	if model == "classifier" {
+		content = f.verdict
+	}
+	return &providers.LLMResponse{ID: fmt.Sprintf("gen-%s-%d", model, len(f.models)), Model: model, Content: content, Usage: &providers.UsageInfo{TotalTokens: 5, Cost: 0.0001}}, nil
+}
+
+func wrapFor(t *testing.T, url string, delegate providers.LLMProvider) *Provider {
+	t.Helper()
+	wrapped, err := Wrap(config.MeteringConfig{Enabled: true, OdooURL: url, ServiceToken: "secret", CustomerToken: "bai-client", QueuePath: filepath.Join(t.TempDir(), "queue.sqlite"), HTTPTimeoutSeconds: 1}, t.TempDir(), delegate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(wrapped.(*Provider).Close)
+	return wrapped.(*Provider)
+}
+
+var baseRouting = RoutingConfig{
+	ClassifierEnabled: true, ClassifierModel: "classifier", ClassifierTimeout: 1, ClassifierFallback: 1,
+	FreeCascade: []string{"free"}, PaidCascade: []string{"paid"}, PremiumEnabled: false,
+	BaseMaxTokens: 256, BaseRemaining: 0.5, PremiumNotice: "Pedí créditos a Betta.",
+}
+
+// Without credit, a complex question is answered by the base AI, capped,
+// with the notice appended once to the final answer.
+func TestComplexRequestWithoutCreditUsesBaseAndNotifies(t *testing.T) {
+	server, reports, mu := tierServer(t, baseRouting)
+	delegate := &recordingProvider{verdict: "2"}
+	p := wrapFor(t, server.URL, delegate)
+	ctx := WithRequest(context.Background(), "analyze the margins of every product line")
+	resp, err := p.Chat(ctx, []providers.Message{{Role: "user", Content: "analyze"}}, nil, "default", map[string]any{"max_tokens": 8192})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(resp.Content, "Pedí créditos a Betta.") {
+		t.Fatalf("answer without notice: %q", resp.Content)
+	}
+	again, _ := p.Chat(ctx, []providers.Message{{Role: "user", Content: "analyze"}}, nil, "default", nil)
+	if strings.Contains(again.Content, "Pedí créditos") {
+		t.Fatal("the notice must be shown once per user turn")
+	}
+	delegate.mu.Lock()
+	if delegate.models[1] != "free" || delegate.options[1]["max_tokens"] != 256 {
+		t.Fatalf("base call = %v %v", delegate.models, delegate.options[1])
+	}
+	delegate.mu.Unlock()
+	for _, r := range waitReports(t, reports, mu, 3) {
+		if r.Tier != "base" {
+			t.Fatalf("report %+v must be base tier", r)
+		}
+	}
+}
+
+// Without credit, an image is not sent to any model.
+func TestImageWithoutCreditIsNotProcessed(t *testing.T) {
+	server, reports, mu := tierServer(t, baseRouting)
+	delegate := &recordingProvider{verdict: "1"}
+	p := wrapFor(t, server.URL, delegate)
+	ctx := WithRequest(context.Background(), "read this receipt")
+	resp, err := p.Chat(ctx, []providers.Message{{Role: "user", Content: "read this receipt", Media: []string{"data:image/png;base64,AAAA"}}}, nil, "default", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Content != "Pedí créditos a Betta." {
+		t.Fatalf("answer = %q", resp.Content)
+	}
+	if len(delegate.models) != 0 {
+		t.Fatalf("no model should be called, got %v", delegate.models)
+	}
+	got := waitReports(t, reports, mu, 1)
+	if got[0].Error != "premium_required" || got[0].HTTPStatus != 402 || got[0].Cost != 0 {
+		t.Fatalf("report = %+v", got[0])
+	}
+}
+
+// With credit, an image goes to the paid cascade even without auto premium.
+func TestImageWithCreditUsesPremium(t *testing.T) {
+	routing := baseRouting
+	routing.PremiumEnabled = true
+	server, reports, mu := tierServer(t, routing)
+	delegate := &recordingProvider{verdict: "1"}
+	p := wrapFor(t, server.URL, delegate)
+	ctx := WithRequest(context.Background(), "read this receipt")
+	if _, err := p.Chat(ctx, []providers.Message{{Role: "user", Content: "read", Media: []string{"x.png"}}}, nil, "default", nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(delegate.models) != 1 || delegate.models[0] != "paid" {
+		t.Fatalf("models = %v", delegate.models)
+	}
+	if got := waitReports(t, reports, mu, 1); got[0].Tier != "premium" || got[0].ClassifierSource != "media" {
+		t.Fatalf("report = %+v", got[0])
+	}
+}
+
+func TestCapTokensKeepsSmallerLimitAndCopies(t *testing.T) {
+	in := map[string]any{"max_tokens": 100}
+	if out := capTokens(in, 256); out["max_tokens"] != 100 {
+		t.Fatalf("smaller limit replaced: %v", out)
+	}
+	in = map[string]any{"max_tokens": 4096}
+	out := capTokens(in, 256)
+	if out["max_tokens"] != 256 || in["max_tokens"] != 4096 {
+		t.Fatalf("cap = %v, original = %v", out, in)
 	}
 }
