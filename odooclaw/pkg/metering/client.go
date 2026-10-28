@@ -74,6 +74,7 @@ func (c *controlClient) authorize(ctx context.Context, token string) (AuthorizeR
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Betta-Service-Token", c.serviceToken)
+	req.Header.Set(VersionHeader, Version)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return AuthorizeResponse{}, fmt.Errorf("authorize request: %w", err)
@@ -105,6 +106,7 @@ func (c *controlClient) sendUsage(ctx context.Context, payload []byte) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Betta-Service-Token", c.serviceToken)
+	req.Header.Set(VersionHeader, Version)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err

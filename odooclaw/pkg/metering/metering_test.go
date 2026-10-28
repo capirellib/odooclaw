@@ -21,6 +21,9 @@ func TestAuthorizeCachesForResponseTTL(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
+		if r.Header.Get(VersionHeader) != Version {
+			t.Errorf("version header = %q, want %q", r.Header.Get(VersionHeader), Version)
+		}
 		if r.Header.Get("X-Betta-Service-Token") != "service-secret" {
 			t.Error("missing service token")
 		}
