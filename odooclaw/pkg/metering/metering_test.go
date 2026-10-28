@@ -376,3 +376,53 @@ func TestCapTokensKeepsSmallerLimitAndCopies(t *testing.T) {
 		t.Fatalf("cap = %v, original = %v", out, in)
 	}
 }
+
+// A used-up allowance or credit is an answer for the customer, not an error:
+// nothing is called and the reply is what Odoo said.
+func TestLimitReachedIsAnsweredNotAnError(t *testing.T) {
+	const msg = "Usaste los USD 2,00 de IA incluidos este mes. Se renuevan el 01/11."
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(AuthorizeResponse{OK: false, Error: "insufficient_credit", Message: msg, TTL: 1})
+	}))
+	defer server.Close()
+	delegate := &recordingProvider{verdict: "1"}
+	p := wrapFor(t, server.URL, delegate)
+	resp, err := p.Chat(WithRequest(context.Background(), "hola"), []providers.Message{{Role: "user", Content: "hola"}}, nil, "default", nil)
+	if err != nil || resp.Content != msg {
+		t.Fatalf("answer = %v / %v", resp, err)
+	}
+	delegate.mu.Lock()
+	defer delegate.mu.Unlock()
+	if len(delegate.models) != 0 {
+		t.Fatalf("no model may be called, got %v", delegate.models)
+	}
+}
+
+// Any other refusal (a bad key, a misconfigured server) stays an error.
+func TestUnknownRefusalStaysAnError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(AuthorizeResponse{OK: false, Error: "invalid_api_key", TTL: 1})
+	}))
+	defer server.Close()
+	p := wrapFor(t, server.URL, &recordingProvider{verdict: "1"})
+	if _, err := p.Chat(WithRequest(context.Background(), "hola"), []providers.Message{{Role: "user", Content: "hola"}}, nil, "default", nil); err == nil {
+		t.Fatal("an invalid key must stay an error")
+	}
+}
+
+// From 80 % of the month's base AI, the answer says what is left, once.
+func TestBaseNoticeIsAppendedOnce(t *testing.T) {
+	routing := baseRouting
+	routing.BaseNotice = "Te quedan USD 0,30 de los USD 2,00 de IA incluidos este mes."
+	server, _, _ := tierServer(t, routing)
+	p := wrapFor(t, server.URL, &recordingProvider{verdict: "1"})
+	ctx := WithRequest(context.Background(), "buscá el cliente Acme")
+	resp, err := p.Chat(ctx, []providers.Message{{Role: "user", Content: "buscá"}}, nil, "default", nil)
+	if err != nil || !strings.HasSuffix(resp.Content, routing.BaseNotice) {
+		t.Fatalf("answer = %v / %v", resp, err)
+	}
+	again, _ := p.Chat(ctx, []providers.Message{{Role: "user", Content: "buscá"}}, nil, "default", nil)
+	if strings.Contains(again.Content, "Te quedan") {
+		t.Fatal("the base notice must be shown once per user turn")
+	}
+}

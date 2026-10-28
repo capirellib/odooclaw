@@ -68,6 +68,10 @@ func (p *Provider) Chat(ctx context.Context, messages []providers.Message, tools
 			if message == "" {
 				message = state.auth.Error
 			}
+			if customerLimit(state.auth.Error) && strings.TrimSpace(state.auth.Message) != "" {
+				state.denied = message
+				return
+			}
 			state.err = fmt.Errorf("authorization denied: %s", message)
 			return
 		}
@@ -81,6 +85,11 @@ func (p *Provider) Chat(ctx context.Context, messages []providers.Message, tools
 	})
 	if state.err != nil {
 		return nil, state.err
+	}
+	// A limit of the customer's account is an answer, not a failure: no
+	// retries, no "Error processing message", just what Odoo said.
+	if state.denied != "" {
+		return &providers.LLMResponse{Content: state.denied, FinishReason: "stop"}, nil
 	}
 	routing := state.auth.Routing
 	explicit := strings.TrimSpace(state.modelSelection) != ""
@@ -124,12 +133,28 @@ func (p *Provider) Chat(ctx context.Context, messages []providers.Message, tools
 			state.noticeShown = true
 			response.Content = strings.TrimRight(response.Content, "\n") + "\n\n---\n" + premiumNotice(routing)
 		}
+		// Most of the month's base AI used: say what is left, once.
+		if tier == "base" && strings.TrimSpace(routing.BaseNotice) != "" &&
+			len(response.ToolCalls) == 0 && !state.baseNoticeShown {
+			state.baseNoticeShown = true
+			response.Content = strings.TrimRight(response.Content, "\n") + "\n\n" + strings.TrimSpace(routing.BaseNotice)
+		}
 		return response, nil
 	}
 	if lastErr == nil {
 		lastErr = errors.New("no model available after applying routing policy")
 	}
 	return nil, lastErr
+}
+
+// customerLimit reports the refusals the customer must read as an answer:
+// credit or base AI used up, the daily base cap, a blocked key.
+func customerLimit(code string) bool {
+	switch code {
+	case "insufficient_credit", "base_daily_limit", "api_key_blocked":
+		return true
+	}
+	return false
 }
 
 // defaultPremiumNotice is used when Odoo sends no text of its own.

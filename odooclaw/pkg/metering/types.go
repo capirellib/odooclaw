@@ -21,6 +21,9 @@ type RoutingConfig struct {
 	BaseMaxTokens int     `json:"base_max_tokens,omitempty"`
 	BaseRemaining float64 `json:"base_remaining,omitempty"`
 	PremiumNotice string  `json:"premium_notice,omitempty"`
+	// BaseNotice tells a customer running on the monthly base AI how much
+	// is left, once 80 % of it is used. Empty otherwise.
+	BaseNotice string `json:"base_notice,omitempty"`
 }
 
 type AuthorizeResponse struct {
@@ -64,6 +67,12 @@ type requestState struct {
 	// noticeShown keeps the "needs credit" notice to one per user turn: a
 	// tool loop calls Chat several times for the same request.
 	noticeShown bool
+	// denied is what Odoo said when it refused the request (credit or base
+	// AI used up, daily cap, blocked key): the customer reads it as the
+	// answer, not as an error.
+	denied string
+	// baseNoticeShown keeps the "base AI left" line to one per user turn.
+	baseNoticeShown bool
 }
 
 type requestKey struct{}
