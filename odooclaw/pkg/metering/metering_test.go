@@ -470,3 +470,66 @@ func TestUsageReportsCarryTheOdooUser(t *testing.T) {
 		t.Fatal("no usage report")
 	}
 }
+
+// answersByModel replies with a fixed text per model.
+type answersByModel struct {
+	mu      sync.Mutex
+	answers map[string]string
+	models  []string
+}
+
+func (f *answersByModel) GetDefaultModel() string { return "default" }
+func (f *answersByModel) Chat(_ context.Context, _ []providers.Message, _ []providers.ToolDefinition, model string, _ map[string]any) (*providers.LLMResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.models = append(f.models, model)
+	return &providers.LLMResponse{ID: "gen-" + model, Model: model, Content: f.answers[model], Usage: &providers.UsageInfo{PromptTokens: 1, CompletionTokens: 1, TotalTokens: 2}}, nil
+}
+
+func cascadeServer(t *testing.T, cascade []string) string {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/authorize" {
+			_ = json.NewEncoder(w).Encode(AuthorizeResponse{OK: true, TTL: 45, Routing: RoutingConfig{FreeCascade: cascade, ClassifierFallback: 1}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	}))
+	t.Cleanup(server.Close)
+	return server.URL
+}
+
+var odooTools = []providers.ToolDefinition{{Type: "function", Function: providers.ToolFunctionDefinition{Name: "odoo_get_totals"}}}
+
+// A tool call written as text consulted nothing: the next model answers.
+func TestToolCallWrittenAsTextTriesTheNextModel(t *testing.T) {
+	delegate := &answersByModel{answers: map[string]string{
+		"weak":   "Te doy el total.\n<function>mcp_odoo-manager_odoo_find_pending_invoices</function>",
+		"strong": "Septiembre: $ 25.808.197",
+	}}
+	p := wrapFor(t, cascadeServer(t, []string{"weak", "strong"}), delegate)
+	resp, err := p.Chat(WithRequest(context.Background(), "total de septiembre"), []providers.Message{{Role: "user", Content: "total de septiembre"}}, odooTools, "default", nil)
+	if err != nil || resp.Content != "Septiembre: $ 25.808.197" {
+		t.Fatalf("answer = %v / %v", resp, err)
+	}
+}
+
+// When every model writes it as text, the customer reads a plain notice.
+func TestEveryModelWritingTheCallGivesANotice(t *testing.T) {
+	delegate := &answersByModel{answers: map[string]string{
+		"weak": `{"name": "odoo_get_totals", "arguments": {}}`,
+	}}
+	p := wrapFor(t, cascadeServer(t, []string{"weak"}), delegate)
+	resp, err := p.Chat(WithRequest(context.Background(), "total"), []providers.Message{{Role: "user", Content: "total"}}, odooTools, "default", nil)
+	if err != nil || resp.Content != toolCallFailedNotice {
+		t.Fatalf("answer = %v / %v", resp, err)
+	}
+}
+
+func TestPlainAnswersAreNotToolCalls(t *testing.T) {
+	for _, text := range []string{"Septiembre: $ 25.808.197", "La función de facturas está en Contabilidad."} {
+		if toolCallAsText(text, odooTools) {
+			t.Fatalf("%q is not a tool call", text)
+		}
+	}
+}

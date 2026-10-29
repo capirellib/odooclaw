@@ -388,6 +388,43 @@ def odoo_search(
 
 
 @mcp.tool()
+def odoo_get_totals(
+    model: str,
+    measures: list[str],
+    domain: list | None = None,
+    groupby: list[str] | None = None,
+    sender_id: int | None = None,
+) -> dict:
+    """
+    Sum numeric fields over ALL matching records, computed by Odoo, like a
+    grouped list view. Use it for any total: billing, purchases, sales,
+    amounts per month, per customer or per product. Never add up records
+    yourself.
+
+    - measures: numeric fields to sum, e.g. ["amount_total_signed"].
+    - domain: Odoo domain, e.g. [["state","=","posted"]].
+    - groupby: optional; fields or dates with a period, e.g.
+      ["invoice_date:month"] or ["partner_id"]. Omit for one grand total.
+
+    Billing (customer invoices minus credit notes) for September 2026:
+    model="account.move", measures=["amount_untaxed_signed","amount_total_signed"],
+    domain=[["move_type","in",["out_invoice","out_refund"]],["state","=","posted"],
+    ["invoice_date",">=","2026-09-01"],["invoice_date","<=","2026-09-30"]].
+    Returns {"count", "totals", "groups"}.
+    """
+    with measure_time("odoo_get_totals"):
+        client = get_odoo_client()
+        return records.odoo_get_totals(
+            client,
+            sender_id or client.odoo_session.uid,
+            model,
+            domain or [],
+            measures,
+            groupby,
+        )
+
+
+@mcp.tool()
 def odoo_read(
     model: str,
     ids: list[int],

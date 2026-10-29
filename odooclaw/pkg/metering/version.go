@@ -5,7 +5,7 @@ package metering
 // reseller panel compares it with the version it expects, so an outdated
 // OdooClaw shows up without logging into the server. Bump it with every
 // change to this package.
-const Version = "2026-10-29.1"
+const Version = "2026-10-29.2"
 
 // VersionHeader carries Version on every request to Odoo.
 const VersionHeader = "X-Betta-Metering-Version"

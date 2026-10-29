@@ -117,6 +117,7 @@ func (p *Provider) Chat(ctx context.Context, messages []providers.Message, tools
 		options = capTokens(options, routing.BaseMaxTokens)
 	}
 	var lastErr error
+	leaked := false
 	for _, model := range models {
 		response, err := p.delegate.Chat(ctx, messages, tools, model, options)
 		if err != nil {
@@ -125,6 +126,13 @@ func (p *Provider) Chat(ctx context.Context, messages []providers.Message, tools
 		}
 		if err := p.enqueueResponse(ctx, response, requestedModel, model, state.complexity, state.source, tier); err != nil {
 			return nil, fmt.Errorf("persist usage before returning provider response: %w", err)
+		}
+		// A model that writes the tool call as text consulted nothing: the
+		// customer would read the call, or figures made up from no data.
+		// The next model in the cascade gets the same turn.
+		if len(response.ToolCalls) == 0 && toolCallAsText(response.Content, tools) {
+			leaked = true
+			continue
 		}
 		// A complex request answered by the base AI: say once, at the end of
 		// the final answer, that more is available with credit.
@@ -141,10 +149,34 @@ func (p *Provider) Chat(ctx context.Context, messages []providers.Message, tools
 		}
 		return response, nil
 	}
+	if leaked {
+		return &providers.LLMResponse{Content: toolCallFailedNotice, FinishReason: "stop"}, nil
+	}
 	if lastErr == nil {
 		lastErr = errors.New("no model available after applying routing policy")
 	}
 	return nil, lastErr
+}
+
+// toolCallFailedNotice answers when every model wrote the call as text.
+const toolCallFailedNotice = "No pude consultar Odoo para responder esto. Probá de nuevo o reformulá la pregunta."
+
+var toolCallTag = regexp.MustCompile(`(?i)<\s*/?\s*(function|tool_call|tool_use|function_call)\b`)
+
+// toolCallAsText reports an answer that spells out a tool call instead of
+// making it: a <function>-style tag, or a JSON call naming one of the tools.
+func toolCallAsText(content string, tools []providers.ToolDefinition) bool {
+	if toolCallTag.MatchString(content) {
+		return true
+	}
+	for _, tool := range tools {
+		name := tool.Function.Name
+		if name != "" && (strings.Contains(content, `"name": "`+name+`"`) ||
+			strings.Contains(content, `"name":"`+name+`"`)) {
+			return true
+		}
+	}
+	return false
 }
 
 // customerLimit reports the refusals the customer must read as an answer:

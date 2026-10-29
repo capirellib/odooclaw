@@ -1,3 +1,4 @@
+import re
 from typing import Any, Dict, List, Optional
 from odoo_mcp.core.client import OdooClient
 from odoo_mcp.security.guards import guard_model_access, guard_write_fields
@@ -81,3 +82,77 @@ def odoo_write(
     guard_write_fields(values)
     audit_action("WRITE", user_id, model, ids, values)
     return client.call_kw(model, "write", args=[ids, values], sender_id=user_id)
+
+
+_FIELD_NAME = re.compile(r"^[a-z_][a-z0-9_]*$")
+_GROUPBY = re.compile(r"^[a-z_][a-z0-9_]*(:(day|week|month|quarter|year))?$")
+
+
+def odoo_get_totals(
+    client: OdooClient,
+    user_id: int,
+    model: str,
+    domain: List[Any],
+    measures: List[str],
+    groupby: Optional[List[str]] = None,
+    limit: int = 100,
+) -> Dict[str, Any]:
+    """Sum numeric fields over every matching record, optionally grouped.
+
+    Odoo does the arithmetic (like a grouped list view), so a total never
+    depends on how many records a search returned or on the model adding
+    them up. ``groupby`` takes fields, dates with a period
+    (``invoice_date:month``) or nothing for one grand total.
+    """
+    validate_domain(domain)
+    groupby = list(groupby or [])
+    if not measures:
+        raise ValueError("measures needs at least one numeric field to sum.")
+    for name in measures:
+        if not _FIELD_NAME.match(name):
+            raise ValueError(f"Invalid measure: {name!r}")
+    for name in groupby:
+        if not _GROUPBY.match(name):
+            raise ValueError(f"Invalid groupby: {name!r}")
+
+    aggregates = [f"{name}:sum" for name in measures]
+    try:
+        # Odoo 19: formatted_read_group replaces the deprecated read_group.
+        rows = client.call_kw(
+            model,
+            "formatted_read_group",
+            args=[domain],
+            kwargs={"groupby": groupby, "aggregates": ["__count", *aggregates], "limit": limit},
+            sender_id=user_id,
+        )
+    except Exception:
+        rows = client.call_kw(
+            model,
+            "read_group",
+            args=[domain],
+            kwargs={"fields": aggregates, "groupby": groupby, "lazy": False, "limit": limit},
+            sender_id=user_id,
+        )
+
+    groups = []
+    for row in rows:
+        group = {"count": row.get("__count", 0)}
+        for name in groupby:
+            value = row.get(name)
+            # Many2one and dated groups come back as [id, label]: keep the label.
+            if isinstance(value, (list, tuple)) and len(value) == 2:
+                value = value[1]
+            group[name] = value
+        for name in measures:
+            value = row.get(f"{name}:sum", row.get(name))
+            group[name] = round(value or 0.0, 2)
+        groups.append(group)
+
+    totals = {name: round(sum(g[name] for g in groups), 2) for name in measures}
+    return {
+        "model": model,
+        "domain": domain,
+        "count": sum(g["count"] for g in groups),
+        "totals": totals,
+        "groups": groups if groupby else [],
+    }
