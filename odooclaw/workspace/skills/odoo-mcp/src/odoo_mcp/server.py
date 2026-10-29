@@ -390,7 +390,7 @@ def odoo_search(
 @mcp.tool()
 def odoo_get_totals(
     model: str,
-    measures: list[str],
+    measures: list[str] | None = None,
     domain: list | None = None,
     groupby: list[str] | None = None,
     sender_id: int | None = None,
@@ -401,7 +401,8 @@ def odoo_get_totals(
     amounts per month, per customer or per product. Never add up records
     yourself.
 
-    - measures: numeric fields to sum, e.g. ["amount_total_signed"].
+    - measures: numeric fields to sum, e.g. ["amount_total_signed"]. Omit it
+      to only count records (each group always has "count").
     - domain: Odoo domain, e.g. [["state","=","posted"]].
     - groupby: optional; fields or dates with a period, e.g.
       ["invoice_date:month"] or ["partner_id"]. Omit for one grand total.

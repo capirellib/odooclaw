@@ -93,11 +93,11 @@ def odoo_get_totals(
     user_id: int,
     model: str,
     domain: List[Any],
-    measures: List[str],
+    measures: Optional[List[str]] = None,
     groupby: Optional[List[str]] = None,
     limit: int = 100,
 ) -> Dict[str, Any]:
-    """Sum numeric fields over every matching record, optionally grouped.
+    """Count records and sum numeric fields, optionally grouped.
 
     Odoo does the arithmetic (like a grouped list view), so a total never
     depends on how many records a search returned or on the model adding
@@ -106,8 +106,7 @@ def odoo_get_totals(
     """
     validate_domain(domain)
     groupby = list(groupby or [])
-    if not measures:
-        raise ValueError("measures needs at least one numeric field to sum.")
+    measures = list(measures or [])
     for name in measures:
         if not _FIELD_NAME.match(name):
             raise ValueError(f"Invalid measure: {name!r}")

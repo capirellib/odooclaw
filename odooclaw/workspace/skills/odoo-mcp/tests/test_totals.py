@@ -50,7 +50,18 @@ def test_falls_back_to_read_group(client):
     assert client.call_kw.call_args.args[1] == "read_group"
 
 
-@pytest.mark.parametrize("measures, groupby", [([], None), (["amount; drop"], None), (["amount_total"], ["date:century"])])
+def test_counts_without_measures(client):
+    client.call_kw.return_value = [
+        {"user_id": [2, "Ana"], "__count": 40},
+        {"user_id": [7, "Luis"], "__count": 12},
+    ]
+    result = odoo_get_totals(client, 2, "betta.whatsapp.queue", [["direction", "=", "outbound"]], groupby=["user_id"])
+    assert result["count"] == 52
+    assert [(g["user_id"], g["count"]) for g in result["groups"]] == [("Ana", 40), ("Luis", 12)]
+    assert client.call_kw.call_args.kwargs["kwargs"]["aggregates"] == ["__count"]
+
+
+@pytest.mark.parametrize("measures, groupby", [(["amount; drop"], None), (["amount_total"], ["date:century"])])
 def test_rejects_bad_input(client, measures, groupby):
     with pytest.raises(ValueError):
         odoo_get_totals(client, 2, "account.move", [], measures, groupby)
