@@ -842,6 +842,7 @@ func (al *AgentLoop) runAgentLoop(
 	// paid cascade, never an arbitrary provider model ID.
 	if opts.Metadata != nil {
 		ctx = metering.WithModelSelection(ctx, opts.Metadata["model_alias"])
+		ctx = metering.WithOdooUser(ctx, opts.Metadata["odoo_user_id"])
 	}
 	// 0. Record last channel for heartbeat notifications (skip internal channels)
 	if opts.Channel != "" && opts.ChatID != "" {

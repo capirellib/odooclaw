@@ -123,7 +123,7 @@ func (p *Provider) Chat(ctx context.Context, messages []providers.Message, tools
 			lastErr = err
 			continue
 		}
-		if err := p.enqueueResponse(response, requestedModel, model, state.complexity, state.source, tier); err != nil {
+		if err := p.enqueueResponse(ctx, response, requestedModel, model, state.complexity, state.source, tier); err != nil {
 			return nil, fmt.Errorf("persist usage before returning provider response: %w", err)
 		}
 		// A complex request answered by the base AI: say once, at the end of
@@ -148,10 +148,11 @@ func (p *Provider) Chat(ctx context.Context, messages []providers.Message, tools
 }
 
 // customerLimit reports the refusals the customer must read as an answer:
-// credit or base AI used up, the daily base cap, a blocked key.
+// credit or base AI used up, the daily base cap, a blocked key, or the AI
+// paused by the customer's own administrator.
 func customerLimit(code string) bool {
 	switch code {
-	case "insufficient_credit", "base_daily_limit", "api_key_blocked":
+	case "insufficient_credit", "base_daily_limit", "api_key_blocked", "ai_paused":
 		return true
 	}
 	return false
@@ -224,7 +225,7 @@ func (p *Provider) enqueueRequired(requestedModel string, state *requestState) e
 	return p.queue.enqueue(UsageReport{
 		Token: p.token, GenerationID: "required-" + uuid.NewString(), ModelRequested: what,
 		Model: requestedModel, Complexity: state.complexity, ClassifierSource: state.source,
-		HTTPStatus: 402, Error: "premium_required",
+		HTTPStatus: 402, Error: "premium_required", OdooUserID: state.odooUserID,
 	})
 }
 
@@ -253,12 +254,12 @@ func (p *Provider) classify(ctx context.Context, prompt string, routing RoutingC
 	complexity := parseComplexity(resp.Content)
 	if complexity == "" {
 		complexity = fallback
-		if err := p.enqueueResponse(resp, routing.ClassifierModel, routing.ClassifierModel, complexity, "fallback", "base"); err != nil {
+		if err := p.enqueueResponse(ctx, resp, routing.ClassifierModel, routing.ClassifierModel, complexity, "fallback", "base"); err != nil {
 			return "", "", fmt.Errorf("persist classifier usage: %w", err)
 		}
 		return complexity, "fallback", nil
 	}
-	if err := p.enqueueResponse(resp, routing.ClassifierModel, routing.ClassifierModel, complexity, "llm", "base"); err != nil {
+	if err := p.enqueueResponse(ctx, resp, routing.ClassifierModel, routing.ClassifierModel, complexity, "llm", "base"); err != nil {
 		return "", "", fmt.Errorf("persist classifier usage: %w", err)
 	}
 	return complexity, "llm", nil
@@ -318,7 +319,7 @@ func routedModels(requested, selected, complexity string, routing RoutingConfig)
 	return result
 }
 
-func (p *Provider) enqueueResponse(resp *providers.LLMResponse, requestedModel, fallbackModel, complexity, source, tier string) error {
+func (p *Provider) enqueueResponse(ctx context.Context, resp *providers.LLMResponse, requestedModel, fallbackModel, complexity, source, tier string) error {
 	if resp == nil || resp.Usage == nil {
 		return errors.New("provider response did not include usage")
 	}
@@ -335,6 +336,7 @@ func (p *Provider) enqueueResponse(resp *providers.LLMResponse, requestedModel, 
 		PromptTokens: resp.Usage.PromptTokens, CompletionTokens: resp.Usage.CompletionTokens,
 		TotalTokens: resp.Usage.TotalTokens, Cost: resp.Usage.Cost,
 		Complexity: complexity, ClassifierSource: source, Tier: tier, HTTPStatus: 200,
+		OdooUserID: odooUserID(ctx),
 	})
 }
 

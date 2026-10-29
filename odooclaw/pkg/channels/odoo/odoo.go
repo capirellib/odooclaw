@@ -388,6 +388,10 @@ func (c *OdooChannel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if modelAlias := strings.TrimSpace(payload.ModelAlias); modelAlias != "" {
 		metadata["model_alias"] = modelAlias
 	}
+	// The Odoo user who wrote, so each consumption is recorded with its user.
+	if payload.AuthorUserID > 0 {
+		metadata["odoo_user_id"] = strconv.Itoa(payload.AuthorUserID)
+	}
 	if payload.CompanyID > 0 {
 		metadata["company_id"] = strconv.Itoa(payload.CompanyID)
 	}

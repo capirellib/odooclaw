@@ -426,3 +426,47 @@ func TestBaseNoticeIsAppendedOnce(t *testing.T) {
 		t.Fatal("the base notice must be shown once per user turn")
 	}
 }
+
+// A pause set by the customer's administrator is answered, not an error.
+func TestPausedAIIsAnsweredNotAnError(t *testing.T) {
+	const msg = "La IA está pausada para tu empresa."
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(AuthorizeResponse{OK: false, Error: "ai_paused", Message: msg, TTL: 1})
+	}))
+	defer server.Close()
+	p := wrapFor(t, server.URL, &recordingProvider{verdict: "1"})
+	resp, err := p.Chat(WithRequest(context.Background(), "hola"), []providers.Message{{Role: "user", Content: "hola"}}, nil, "default", nil)
+	if err != nil || resp.Content != msg {
+		t.Fatalf("answer = %v / %v", resp, err)
+	}
+}
+
+// Every usage report of a turn carries the Odoo user who asked.
+func TestUsageReportsCarryTheOdooUser(t *testing.T) {
+	users := make(chan int, 4)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/authorize":
+			_ = json.NewEncoder(w).Encode(AuthorizeResponse{OK: true, TTL: 45, Routing: RoutingConfig{FreeCascade: []string{"free"}}})
+		case "/api/v1/usage":
+			var report UsageReport
+			_ = json.NewDecoder(r.Body).Decode(&report)
+			users <- report.OdooUserID
+			_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+		}
+	}))
+	defer server.Close()
+	p := wrapFor(t, server.URL, &recordingProvider{verdict: "1"})
+	ctx := WithOdooUser(WithRequest(context.Background(), "hola"), "7")
+	if _, err := p.Chat(ctx, []providers.Message{{Role: "user", Content: "hola"}}, nil, "default", nil); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-users:
+		if got != 7 {
+			t.Fatalf("odoo_user_id = %d, want 7", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no usage report")
+	}
+}

@@ -2,6 +2,8 @@ package metering
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -40,9 +42,12 @@ type AuthorizeResponse struct {
 }
 
 type UsageReport struct {
-	Token            string  `json:"token"`
-	RequestID        string  `json:"request_id,omitempty"`
-	GenerationID     string  `json:"generation_id"`
+	Token        string `json:"token"`
+	RequestID    string `json:"request_id,omitempty"`
+	GenerationID string `json:"generation_id"`
+	// OdooUserID is the Odoo user who asked, so the account statement shows
+	// who consumed each request. 0 when the request did not come from Odoo.
+	OdooUserID       int     `json:"odoo_user_id,omitempty"`
 	ModelRequested   string  `json:"model_requested,omitempty"`
 	Model            string  `json:"model"`
 	PromptTokens     int     `json:"prompt_tokens"`
@@ -59,6 +64,7 @@ type UsageReport struct {
 type requestState struct {
 	prompt         string
 	modelSelection string
+	odooUserID     int
 	once           sync.Once
 	auth           AuthorizeResponse
 	complexity     string
@@ -94,6 +100,29 @@ func WithModelSelection(ctx context.Context, model string) context.Context {
 	}
 	state.modelSelection = model
 	return ctx
+}
+
+// WithOdooUser attaches the Odoo user (res.users id) who sent the current
+// user turn. Every usage report of that turn carries it.
+func WithOdooUser(ctx context.Context, userID string) context.Context {
+	id, err := strconv.Atoi(strings.TrimSpace(userID))
+	if err != nil || id <= 0 {
+		return ctx
+	}
+	state := stateFromContext(ctx)
+	if state == nil {
+		state = &requestState{}
+		ctx = context.WithValue(ctx, requestKey{}, state)
+	}
+	state.odooUserID = id
+	return ctx
+}
+
+func odooUserID(ctx context.Context) int {
+	if state := stateFromContext(ctx); state != nil {
+		return state.odooUserID
+	}
+	return 0
 }
 
 func stateFromContext(ctx context.Context) *requestState {
