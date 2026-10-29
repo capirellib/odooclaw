@@ -11,6 +11,10 @@ const actNowNudge = "[System] Your reply only announced what you would do, and t
 	"Nothing runs after your reply. Do it now: call the tools you need and answer with the results. " +
 	"If you really need the user to choose something first, ask only that."
 
+// emptyReplyNudge follows an empty reply: the user would read nothing.
+const emptyReplyNudge = "[System] Your reply was empty. Answer the user's last message now, in their language: " +
+	"with the result, or saying plainly what you could not do and why."
+
 // announcePhrases are promises of work to come, in Spanish and English.
 var announcePhrases = regexp.MustCompile(`(?i)\b(proceder[ée]|procedo a|voy a (consultar|buscar|revisar|analizar|verificar|obtener|calcular|generar|preparar)|` +
 	`(un|dame un|en un) momento|esto puede (tomar|demorar|llevar)|en breve te|ahora (consulto|busco|reviso|verifico)|` +

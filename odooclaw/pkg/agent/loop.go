@@ -63,7 +63,7 @@ type processOptions struct {
 	NoHistory       bool     // If true, don't load session history (for heartbeat)
 }
 
-const defaultResponse = "I've completed processing but have no response to give. Increase `max_tool_iterations` in config.json."
+const defaultResponse = "No pude armar una respuesta. Probá de nuevo o reformulá la pregunta."
 
 func NewAgentLoop(
 	cfg *config.Config,
@@ -997,8 +997,9 @@ func (al *AgentLoop) runLLMIteration(
 ) (string, int, error) {
 	iteration := 0
 	var finalContent string
-	// usedTools and nudged drive the announce-only check below.
-	usedTools, nudged := false, false
+	// usedTools and nudged drive the announce-only check below; emptyNudged
+	// the one retry after an empty reply.
+	usedTools, nudged, emptyNudged := false, false, false
 
 	for iteration < agent.MaxIterations {
 		iteration++
@@ -1192,6 +1193,14 @@ func (al *AgentLoop) runLLMIteration(
 					providers.Message{Role: "assistant", Content: response.Content},
 					providers.Message{Role: "user", Content: actNowNudge},
 				)
+				continue
+			}
+			// An empty reply leaves the user with nothing: ask once for one.
+			if strings.TrimSpace(response.Content) == "" && !emptyNudged && iteration < agent.MaxIterations {
+				emptyNudged = true
+				logger.InfoCF("agent", "Empty reply, asking for an answer",
+					map[string]any{"agent_id": agent.ID, "iteration": iteration})
+				messages = append(messages, providers.Message{Role: "user", Content: emptyReplyNudge})
 				continue
 			}
 			finalContent = response.Content

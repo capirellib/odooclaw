@@ -77,3 +77,18 @@ def test_view_and_report_patches_only_for_administrators(client):
     client.call_kw.return_value = True
     names = [a["name"] for a in server.odoo_list_actions(sender_id=2)["actions"]]
     assert "odoo_apply_view_patch_safe" in names
+
+
+def test_activity_type_is_looked_up_by_name(client):
+    answers = {"ir.model": [3], "mail.activity.type": [2], "mail.activity": 10}
+    client.call_kw.side_effect = lambda model, method, **kw: answers[model]
+    out = run(server.odoo_run_action(
+        name="odoo_create_activity",
+        arguments={"model": "res.partner", "res_id": 90, "summary": "Llamar por facturas vencidas",
+                   "date_deadline": "2026-10-30", "activity_type": "Llamada"},
+        sender_id=2,
+    ))
+    assert out == 10
+    values = client.call_kw.call_args_list[-1].kwargs["args"][0]
+    assert values["res_model"] == "res.partner" and values["res_id"] == 90
+    assert values["activity_type_id"] == 2 and values["res_model_id"] == 3

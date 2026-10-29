@@ -531,11 +531,21 @@ def odoo_create_activity(
     model: str,
     res_id: int,
     summary: str,
-    note: str,
+    note: str = "",
     user_id: int | None = None,
     sender_id: int | None = None,
     date_deadline: str | None = None,
+    activity_type: str | None = None,
 ) -> int:
+    """
+    Schedule an activity (call, email, meeting, to-do) on any Odoo record.
+    - model / res_id: the record, e.g. "res.partner" and the customer's id.
+    - summary: short title; note: details (optional).
+    - date_deadline: "YYYY-MM-DD" (today if omitted).
+    - activity_type: type name as shown in Odoo, e.g. "Llamada", "Email", "Reunión".
+    - user_id: who it is assigned to (the user asking if omitted).
+    Returns the new activity id.
+    """
     with measure_time("odoo_create_activity"):
         client = get_odoo_client()
         return chatter.odoo_create_activity(
@@ -547,6 +557,7 @@ def odoo_create_activity(
             note,
             user_id,
             date_deadline,
+            activity_type,
         )
 
 
@@ -2847,6 +2858,8 @@ async def odoo_run_action(
         with measure_time(f"odoo_run_action:{name}"):
             return await tool.run(args)
     except Exception as exc:
+        # The model reads the error and retries; the log keeps it for us.
+        _logger.warning("odoo_run_action %s failed: %s", name, exc)
         return {"error": str(exc), "arguments": _public_schema(tool)}
 
 

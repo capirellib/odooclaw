@@ -73,3 +73,31 @@ func TestAnnounceOnlyReplyIsAskedToAct(t *testing.T) {
 		t.Fatalf("nudged=%v response=%q", provider.nudged, response)
 	}
 }
+
+// emptyThenAnswerProvider replies empty first, then answers when asked.
+type emptyThenAnswerProvider struct{ calls int }
+
+func (p *emptyThenAnswerProvider) GetDefaultModel() string { return "mock-model" }
+func (p *emptyThenAnswerProvider) Chat(_ context.Context, messages []providers.Message, _ []providers.ToolDefinition, _ string, _ map[string]any) (*providers.LLMResponse, error) {
+	p.calls++
+	if messages[len(messages)-1].Content == emptyReplyNudge {
+		return &providers.LLMResponse{Content: "No puedo borrar actividades; ¿la marco como hecha?"}, nil
+	}
+	return &providers.LLMResponse{Content: ""}, nil
+}
+
+func TestEmptyReplyIsAskedOnce(t *testing.T) {
+	cfg := &config.Config{Agents: config.AgentsConfig{Defaults: config.AgentDefaults{
+		Workspace: t.TempDir(), Model: "test-model", MaxTokens: 4096, MaxToolIterations: 10,
+	}}}
+	provider := &emptyThenAnswerProvider{}
+	al := NewAgentLoop(cfg, bus.NewMessageBus(), provider)
+	agent := al.registry.GetDefaultAgent()
+	agent.Sessions.GetOrCreate("s")
+	response, err := al.runAgentLoop(context.Background(), agent, processOptions{
+		SessionKey: "s", Channel: "test", ChatID: "c", UserMessage: "Borrá la actividad", DefaultResponse: defaultResponse,
+	})
+	if err != nil || response != "No puedo borrar actividades; ¿la marco como hecha?" || provider.calls != 2 {
+		t.Fatalf("calls=%d response=%q err=%v", provider.calls, response, err)
+	}
+}

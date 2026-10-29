@@ -17,6 +17,7 @@ def create_activity(
     note: str = None,
     assign_to: int = None,
     date_deadline: str = None,
+    activity_type: str = None,
 ) -> int:
     values = {
         "res_model": model,
@@ -40,6 +41,18 @@ def create_activity(
 
     if assign_to:
         values["user_id"] = assign_to
+
+    # "Llamada", "Email", "Reunión"…: the type is looked up by its name.
+    if activity_type:
+        type_ids = client.call_kw(
+            "mail.activity.type",
+            "search",
+            args=[[("name", "ilike", activity_type)]],
+            kwargs={"limit": 1},
+            sender_id=user_id,
+        )
+        if type_ids:
+            values["activity_type_id"] = type_ids[0]
 
     _logger.info(f"Creating activity for {model} id {res_id}")
     return client.call_kw("mail.activity", "create", args=[values], sender_id=user_id)
