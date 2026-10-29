@@ -6,9 +6,14 @@ description: Query WhatsApp activity in Odoo (Betta Evolution API modules) - who
 # WhatsApp in Odoo (Betta Evolution API)
 
 Every WhatsApp message, sent or received, is one record of the model
-`betta.whatsapp.queue`. Read it with the generic tools: `odoo_get_totals` for
-counts, `odoo_search` + `odoo_read` for the messages themselves. Never say you
-have no access to WhatsApp before trying these.
+`betta.whatsapp.queue`. There is no WhatsApp-specific tool: use the generic
+Odoo tools, named exactly
+- `mcp_odoo-manager_odoo_get_totals` for counts and sums,
+- `mcp_odoo-manager_odoo_search` + `mcp_odoo-manager_odoo_read` for the messages themselves,
+- `mcp_odoo-manager_odoo_get_model_schema` to check a field.
+
+Never invent another tool name, and never say you have no access to WhatsApp
+before trying these.
 
 If `betta.whatsapp.queue` does not exist in this Odoo, the Betta WhatsApp
 modules are not installed: check `whatsapp.message` (Odoo Enterprise WhatsApp)
@@ -35,7 +40,7 @@ with `odoo_get_model_schema` before answering that there is no data.
 Messages sent per user and month, July to September 2026:
 
 ```
-odoo_get_totals(
+mcp_odoo-manager_odoo_get_totals(
   model="betta.whatsapp.queue",
   domain=[["direction","=","outbound"],
           ["create_date",">=","2026-07-01 00:00:00"],
