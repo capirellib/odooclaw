@@ -997,6 +997,8 @@ func (al *AgentLoop) runLLMIteration(
 ) (string, int, error) {
 	iteration := 0
 	var finalContent string
+	// usedTools and nudged drive the announce-only check below.
+	usedTools, nudged := false, false
 
 	for iteration < agent.MaxIterations {
 		iteration++
@@ -1178,6 +1180,20 @@ func (al *AgentLoop) runLLMIteration(
 			})
 		// Check if no tool calls - we're done
 		if len(response.ToolCalls) == 0 {
+			// A reply that only announces work ("procederé a consultar…")
+			// ends the turn with nothing done: the user waits for a result
+			// that never comes. Ask once for the work itself.
+			if !usedTools && !nudged && len(providerToolDefs) > 0 &&
+				iteration < agent.MaxIterations && announcesWork(response.Content) {
+				nudged = true
+				logger.InfoCF("agent", "Reply only announced work, asking to do it now",
+					map[string]any{"agent_id": agent.ID, "iteration": iteration})
+				messages = append(messages,
+					providers.Message{Role: "assistant", Content: response.Content},
+					providers.Message{Role: "user", Content: actNowNudge},
+				)
+				continue
+			}
 			finalContent = response.Content
 			logger.InfoCF("agent", "LLM response without tool calls (direct answer)",
 				map[string]any{
@@ -1188,6 +1204,7 @@ func (al *AgentLoop) runLLMIteration(
 			break
 		}
 
+		usedTools = true
 		normalizedToolCalls := make([]providers.ToolCall, 0, len(response.ToolCalls))
 		for _, tc := range response.ToolCalls {
 			normalizedToolCalls = append(normalizedToolCalls, providers.NormalizeToolCall(tc))
