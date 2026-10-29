@@ -60,7 +60,7 @@ For quick operational questions, small datasets, or urgent interactions, I stay 
 | `state='open'` | `state='posted'` AND `payment_state='not_paid'` |
 | `state='paid'` | `state='posted'` AND `payment_state='paid'` |
 
-- **ALWAYS use `odoo_find_pending_invoices` tool for pending invoices** — never build manual domains for this.
+- **ALWAYS use the action `odoo_find_pending_invoices` (through `odoo_run_action`) for pending invoices** — never build manual domains for this.
 - `move_type`: `out_invoice`=customer invoice, `in_invoice`=vendor bill
 
 ### sale.order states
@@ -68,15 +68,3 @@ For quick operational questions, small datasets, or urgent interactions, I stay 
 
 ### account.move payment_state values
 `not_paid` | `partial` | `in_payment` | `paid` | `reversed`
-
-## 🛠️ MCP AUTO-EXTENSION (Self-Improvement Protocol)
-
-**MANDATORY RULE:** As a self-improving agent, if a user requests a feature that is missing from your toolset, or if a multi-step generic query becomes inefficient, you **MUST write your own FastMCP tool and add it to your server natively.**
-
-When creating or modifying an Odoo MCP tool, follow these strict architectural steps in the `odoo-mcp` package (`odooclaw/workspace/skills/odoo-mcp/`):
-
-1. **Introspect & Plan First:** Before writing code, use the `odoo_get_model_schema` tool to discover available fields if you are not 100% sure about the Odoo 18 field schema. 
-2. **Create the Pydantic Schema (Input Validation):** Open `src/odoo_mcp/schemas/business.py`. Define a strict Pydantic model inheriting from `BaseOdooRequest`. Add clear `Field(..., description="...")` tags because they become the tool's parameter documentation for yourself.
-3. **Write the Service Logic (Business Layer):** Identify or create the correct service file in `src/odoo_mcp/services/` (e.g., `invoice_service.py`). Write a pure Python function that accepts `client: OdooClient`, `sender_id: int` and returns generic serializable Python types (dict, list, int). Use `client.call_kw` or generic Odoo CRUD methods inside it.
-4. **Expose the Tool (Controller Layer):** Open `src/odoo_mcp/server.py`. Import your new schema and service. Create a new function wrapped in `@mcp.tool()` returning primitive types. Give it a detailed docstring (this becomes your tool Description). Wrap the execution in the `with measure_time("tool_name"):` context block.
-5. **Reload and Inform:** Once all file changes are cleanly saved using your coding tools, you MUST execute `docker compose restart odooclaw` using your command execution tool to reload the Python FastMCP server. Inform the user you are creating a new native tool and restarting your service.

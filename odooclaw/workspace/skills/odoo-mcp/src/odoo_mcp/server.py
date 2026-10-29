@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 from functools import lru_cache
 from typing import Any
@@ -320,7 +321,7 @@ def get_odoo18_fields_reference() -> str:
 - Vendor bills pending:
   [["state","=","posted"],["payment_state","in",["not_paid","partial"]],
    ["move_type","=","in_invoice"]]
-- USE TOOL: odoo_find_pending_invoices — it handles all this automatically
+- USE ACTION: odoo_find_pending_invoices (via odoo_run_action) — it handles all this automatically
 
 ## sale.order
 - state=draft: quotation
@@ -2680,6 +2681,187 @@ def odoo_batch_assist_report_migration(
             strict=strict,
             continue_on_error=continue_on_error,
         )
+
+
+# --- Herramientas bajo demanda -------------------------------------------
+# Every tool description travels to the model on every step: 125 of them
+# were about 19k tokens per step. Only the generic tools stay visible; every
+# other tool is still here and runs through odoo_list_actions and
+# odoo_run_action, so its description is sent only when it is used.
+
+ALWAYS_VISIBLE = {
+    "odoo_search",
+    "odoo_read",
+    "odoo_get_totals",
+    "odoo_get_model_schema",
+    "odoo_create",
+    "odoo_write",
+    "odoo_list_actions",
+    "odoo_run_action",
+}
+
+# Developer tools that change views and reports: only for Odoo administrators.
+ADMIN_ONLY = re.compile(
+    r"(view|report)_(patch|migration)|rollback_patch|view_compilation|"
+    r"views?_by_(xmlid|model)|report_template|migration_issues"
+)
+
+# Filled by OdooClaw from the Odoo message itself: never taken from the model.
+TRUSTED_ARGS = ("sender_id", "company_id", "allowed_company_ids")
+
+# Spanish words the customer uses, and the English the tool names use.
+SEARCH_SYNONYMS = {
+    "factura": ["invoice", "bill"],
+    "facturas": ["invoice", "bill"],
+    "presupuesto": ["quotation", "sale_order"],
+    "venta": ["sale"],
+    "ventas": ["sale"],
+    "pedido": ["order"],
+    "compra": ["purchase"],
+    "compras": ["purchase"],
+    "proveedor": ["vendor", "supplier", "purchase"],
+    "cliente": ["partner", "customer"],
+    "contacto": ["partner", "contact"],
+    "stock": ["stock", "inventory", "location"],
+    "inventario": ["stock", "inventory"],
+    "entrega": ["delivery", "picking"],
+    "extracto": ["bank", "statement"],
+    "banco": ["bank"],
+    "gasto": ["expense"],
+    "gastos": ["expense"],
+    "tarea": ["task", "project"],
+    "proyecto": ["project"],
+    "ticket": ["helpdesk", "ticket"],
+    "actividad": ["activity"],
+    "mensaje": ["message", "chatter"],
+    "pdf": ["ocr"],
+    "ocr": ["ocr"],
+    "asiento": ["journal", "entry"],
+    "contrato": ["contract"],
+    "empleado": ["employee", "hr"],
+    "horas": ["timesheet"],
+}
+
+_ACTIONS: dict = {}
+
+
+def _is_admin(sender_id: int | None) -> bool:
+    client = get_odoo_client()
+    uid = sender_id or client.odoo_session.uid
+    try:
+        # Asked as that same user: Odoo answers has_group about one's own record.
+        return bool(client.call_kw(
+            "res.users", "has_group", args=[[uid], "base.group_system"], sender_id=uid
+        ))
+    except Exception:
+        return False
+
+
+def _available_actions(sender_id: int | None) -> dict:
+    admin = None
+    actions = {}
+    for name, tool in _ACTIONS.items():
+        if ADMIN_ONLY.search(name):
+            if admin is None:
+                admin = _is_admin(sender_id)
+            if not admin:
+                continue
+        actions[name] = tool
+    return actions
+
+
+def _public_schema(tool) -> dict:
+    schema = dict(tool.parameters or {})
+    props = {k: v for k, v in (schema.get("properties") or {}).items() if k not in TRUSTED_ARGS}
+    schema["properties"] = props
+    if schema.get("required"):
+        schema["required"] = [k for k in schema["required"] if k not in TRUSTED_ARGS]
+    return schema
+
+
+def _summary(tool) -> str:
+    text = " ".join((tool.description or "").split())
+    return text[:160]
+
+
+@mcp.tool()
+def odoo_list_actions(
+    search: str | None = None,
+    name: str | None = None,
+    sender_id: int | None = None,
+    company_id: int | None = None,
+    allowed_company_ids: list[int] | None = None,
+) -> dict:
+    """
+    Specific Odoo actions beyond search/read/totals: register a vendor bill
+    from a PDF, import a bank statement, create a quotation, pending invoices
+    of a customer, stock moves, expenses, helpdesk tickets and more.
+
+    - search: words to look for, Spanish or English ("factura proveedor pdf").
+      Without a match, every action is listed.
+    - name: an exact action name, to get the arguments it takes.
+    Then run it with odoo_run_action(name, arguments).
+    """
+    actions = _available_actions(sender_id)
+    if name:
+        tool = actions.get(name)
+        if not tool:
+            return {"error": f"No action named {name!r}. Call odoo_list_actions to see them."}
+        return {"name": name, "description": tool.description, "arguments": _public_schema(tool)}
+    words = []
+    for word in (search or "").lower().split():
+        words.extend([word, *SEARCH_SYNONYMS.get(word, [])])
+    found = {
+        n: t for n, t in actions.items()
+        if words and any(w in n or w in (t.description or "").lower() for w in words)
+    }
+    listed = found or actions
+    return {
+        "matches": len(found),
+        "actions": [{"name": n, "summary": _summary(t)} for n, t in sorted(listed.items())],
+        "next": "Call odoo_list_actions(name=...) for its arguments, then odoo_run_action.",
+    }
+
+
+@mcp.tool()
+async def odoo_run_action(
+    name: str,
+    arguments: dict | None = None,
+    sender_id: int | None = None,
+    company_id: int | None = None,
+    allowed_company_ids: list[int] | None = None,
+) -> Any:
+    """
+    Run one specific Odoo action found with odoo_list_actions.
+    - name: the action name, e.g. "odoo_find_pending_invoices".
+    - arguments: its arguments as an object, e.g. {"partner_id": 7}.
+    """
+    tool = _available_actions(sender_id).get(name)
+    if not tool:
+        return {"error": f"No action named {name!r} for this user. Call odoo_list_actions to see them."}
+    args = {k: v for k, v in (arguments or {}).items() if k not in TRUSTED_ARGS}
+    trusted = {"sender_id": sender_id, "company_id": company_id, "allowed_company_ids": allowed_company_ids}
+    accepted = (tool.parameters or {}).get("properties") or {}
+    args.update({k: v for k, v in trusted.items() if v is not None and k in accepted})
+    try:
+        with measure_time(f"odoo_run_action:{name}"):
+            return await tool.run(args)
+    except Exception as exc:
+        return {"error": str(exc), "arguments": _public_schema(tool)}
+
+
+def _hide_specific_tools() -> None:
+    """Keep only ALWAYS_VISIBLE in the tool list; the rest become actions.
+    ODOO_MCP_ALL_TOOLS=1 lists every tool again, as before."""
+    if os.environ.get("ODOO_MCP_ALL_TOOLS") == "1":
+        return
+    for tool in mcp._tool_manager.list_tools():
+        if tool.name not in ALWAYS_VISIBLE:
+            _ACTIONS[tool.name] = tool
+            mcp._tool_manager.remove_tool(tool.name)
+
+
+_hide_specific_tools()
 
 
 # Este bloque va al FINAL del archivo a proposito: mcp.run() bloquea

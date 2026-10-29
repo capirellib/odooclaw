@@ -10,7 +10,7 @@ Use this skill to preview and import bank statement transactions into Odoo 19.
 ## Required workflow
 
 1. Identify the Odoo `ir.attachment` and the bank or cash `journal_id`.
-2. Call `odoo_import_bank_statement` with `dry_run=true` and `confirm=false`.
+2. Run the action `odoo_import_bank_statement` through `odoo_run_action` (`name="odoo_import_bank_statement"`, `arguments={... "dry_run": true, "confirm": false}`).
 3. Show parsed totals, invalid rows, duplicate status, opening/closing balance checks, and a sample of transactions.
 4. Resolve every validation error before continuing.
 5. Ask for explicit confirmation.
@@ -30,7 +30,7 @@ Prefer `attachment_id` for files uploaded through Odoo. Use `file_content_b64` o
 
 ## Tool
 
-`odoo_import_bank_statement` accepts:
+The action `odoo_import_bank_statement` (run it with `odoo_run_action`) accepts:
 
 - `journal_id`: required bank or cash journal.
 - `attachment_id`: preferred Odoo attachment source.
